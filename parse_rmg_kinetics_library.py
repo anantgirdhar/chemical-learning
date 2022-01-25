@@ -18,7 +18,7 @@ species = []
 
 # Define some functions that can be used to parse the library quickly
 
-def entry(index, label, degeneracy=None, kinetics=None, duplicate=False, reversible=True, elementary_high_p=False, longDesc=None, shortDesc=None):
+def entry(index, label, degeneracy=None, kinetics=None, duplicate=False, reversible=True, elementary_high_p=False, longDesc=None, shortDesc=None, allow_max_rate_violation=None, allow_pdep_route=None, reference=None, referenceType=None):
     """Each reaction is expressed as an "entry" in the library"""
     entries.append({
             'rxn_string': label,
@@ -29,26 +29,29 @@ def entry(index, label, degeneracy=None, kinetics=None, duplicate=False, reversi
             'elementary_high_p': elementary_high_p,
             })
 
-def Arrhenius(A, n, Ea, T0, Tmin=None, Tmax=None, comment=None):
-    return 'Arrhenius', {'A': A, 'n': n, 'Ea': Ea, 'T0': T0, 'Tmin': Tmin, 'Tmax': Tmax}
+def Article(*args, **kwargs):
+    return None
+
+def Arrhenius(A, n, Ea, T0, Tmin=None, Tmax=None, comment=None, Pmin=None, Pmax=None):
+    return 'Arrhenius', {'A': A, 'n': n, 'Ea': Ea, 'T0': T0, 'Tmin': Tmin, 'Tmax': Tmax, 'Pmin': Pmin, 'Pmax': Pmax}
 
 def MultiArrhenius(arrhenius):
     return 'MultiArrhenius', [a[1] for a in arrhenius]
 
-def ThirdBody(arrheniusLow, efficiencies=None):
+def ThirdBody(arrheniusLow, efficiencies=None, comment=None):
     return 'ThirdBody', {
             'arrheniusLow': arrheniusLow[1],
             'efficiencies': efficiencies,
             }
 
-def Lindemann(arrheniusLow, arrheniusHigh, efficiencies, comment=None):
+def Lindemann(arrheniusLow, arrheniusHigh, efficiencies=None, comment=None):
     return 'Lindemann', {
             'arrheniusLow': arrheniusLow,
             'arrheniusHigh': arrheniusHigh,
             'efficiencies': efficiencies,
             }
 
-def Troe(arrheniusLow, arrheniusHigh, efficiencies, alpha=None, T1=None, T3=None, T2=None):
+def Troe(arrheniusLow, arrheniusHigh, efficiencies, alpha=None, T1=None, T3=None, T2=None, comment=None):
     return 'Troe', {
             'arrheniusLow': arrheniusLow,
             'arrheniusHigh': arrheniusHigh,
