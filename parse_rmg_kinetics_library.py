@@ -89,7 +89,7 @@ def count_atoms(graph_lines):
     """Get the atom counts from the chemical adjacency graph"""
     atom_counts = {}
     for line in graph_lines:
-        atom = line.split(' ')[1]
+        atom = line.split()[1]
         if atom in atom_counts:
             atom_counts[atom] += 1
         else:
