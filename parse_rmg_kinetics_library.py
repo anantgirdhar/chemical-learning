@@ -85,6 +85,17 @@ def Chebyshev(coeffs, kunits, Tmin, Tmax, Pmin, Pmax):
 
 # Do the parsing
 
+def count_atoms(graph_lines):
+    """Get the atom counts from the chemical adjacency graph"""
+    atom_counts = {}
+    for line in graph_lines:
+        atom = line.split(' ')[1]
+        if atom in atom_counts:
+            atom_counts[atom] += 1
+        else:
+            atom_counts[atom] = 1
+    return atom_counts
+
 def load_species(dictionary_file):
     """Read an RMG dictionary file and load species information"""
     global species
@@ -104,6 +115,7 @@ def load_species(dictionary_file):
                 species[name] = {
                         'multiplicity': multiplicity,
                         'graph': graph_lines,
+                        'atom_counts': count_atoms(graph_lines),
                         }
                 name = None
                 start_new_species = True
