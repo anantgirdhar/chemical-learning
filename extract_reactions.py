@@ -16,7 +16,7 @@ def extract_arrhenius(pickle_files, output_pickle):
     # Load data from the pickles
     for pfile in pickle_files:
         with open(pfile, 'rb') as f:
-            entries = pickle.load(f)
+            entries, species = pickle.load(f)
         for e in entries:
             if e['kinetics_type'] == 'Arrhenius':
                 subset.append(e)
