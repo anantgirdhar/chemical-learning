@@ -128,9 +128,9 @@ def parse(library_path):
     global entries
     entries = []
     if not os.path.isdir(library_path):
-        raise ValueError(f'{library_path} is not a valid directory')
+        raise NotADirectoryError(f'{library_path} is not a valid directory')
     if not os.path.isfile(os.path.join(library_path, 'reactions.py')):
-        raise ValueError(f'reactions.py not found in {library_path}')
+        raise FileNotFoundError(f'reactions.py not found in {library_path}')
     print(f'\nLibrary: {library_path}')
     library_name = os.path.basename(library_path)
     dictionary_file_path = os.path.join(library_path, 'dictionary.txt')
@@ -144,7 +144,7 @@ def parse(library_path):
         # Create the directory
         os.mkdir('./rmg_compiled_pickles')
     elif not os.path.isdir('./rmg_compiled_pickles'):
-        raise ValueError('./rmg_compiled_pickles is not a valid directory')
+        raise NotADirectoryError('./rmg_compiled_pickles is not a valid directory')
     # Pickle the data
     with open(f'rmg_compiled_pickles/{library_name}.p', 'wb') as f:
         pickle.dump([entries, species], f)
