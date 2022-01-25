@@ -91,25 +91,25 @@ def load_species(dictionary_file):
     species = {}
     with open(dictionary_file, 'r') as f:
         start_new_species = True  # indicates the start of a new species
+        name = None
         for line in f:
             line = line.strip()
-            if start_new_species is True:
+            if start_new_species is True and line != "":
                 name = line
                 multiplicity = None
                 graph_lines = []
                 start_new_species = False
-            elif line == "":
+            elif line == "" and name is not None:
                 # this is the end of the species
-                start_new_species = True
                 species[name] = {
                         'multiplicity': multiplicity,
                         'graph': graph_lines,
                         }
-                continue
+                name = None
+                start_new_species = True
             elif line.startswith("multiplicity"):
                 # Add the multiplicity
                 multiplicity = int(line.split(" ")[1])
-                continue
             else:
                 # This is part of the species
                 # Check that the line number matches the next one in the series
