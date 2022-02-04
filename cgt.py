@@ -57,7 +57,8 @@ class Specie():
         BONDWIDTHS = {'S': 1, 'D': 2, 'T': 3}
         BONDSTYLES = {'S': '-', 'D': '--', 'T': '-.'}
         # Create the basic layout
-        pos = nx.spring_layout(self.G, seed=3113794652)
+        pos = nx.spring_layout(self.G, seed=3113794652, iterations=100)
+        # pos = nx.planar_layout(self.G)
         # Draw the atoms
         node_colors = [ATOMCOLORS[self.G.nodes[node]['atom']] for node in self.G.nodes]
         nx.draw_networkx_nodes(self.G, pos, node_color=node_colors, node_size=800, alpha=0.7)
@@ -67,7 +68,23 @@ class Specie():
         edge_styles = [BONDSTYLES[self.G.edges[bond]['type']] for bond in self.G.edges]
         nx.draw_networkx_edges(self.G, pos, edge_color=edge_colors, width=edge_widths, style=edge_styles)
         # Draw the labels
-        atom_labels = {node: self.G.nodes[node]['atom'] for node in self.G.nodes}
+        # atom_labels = {node: self.G.nodes[node]['atom'] for node in self.G.nodes}
+        atom_labels = {}
+        for node in self.G.nodes:
+            label = '$'
+            atom_type = self.G.nodes[node]['atom']
+            u = self.G.nodes[node]['u']
+            p = self.G.nodes[node]['p']
+            c = self.G.nodes[node]['c']
+            if u > 0:
+                label += r'_{u' + str(u) + r'}'
+            label += atom_type
+            if p > 0:
+                label += r'_{p' + str(p) + r'}'
+            if c > 0:
+                label += r'^{' + str(c) + r'}'
+            label += '$'
+            atom_labels[node] = label
         nx.draw_networkx_labels(self.G, pos, atom_labels, font_size=22, font_color='whitesmoke')
         # nx.draw_planar(self.G, with_labels=True, node_color=node_colors, edge_color=edge_colors, width=edge_widths, style=edge_styles, font_weight='bold')
         plt.show(block=block)
@@ -84,24 +101,26 @@ class Specie():
         return counts
 
     def __repr__(self):
+        return f"<Specie {self.__str__()}>"
         return self.__str__()
 
     def __str__(self):
         atom_counts = self.atom_counts
+        # Reorder the atoms so that they appear in a somewhat specific order
+        order = ['C', 'H', 'O', 'N']
+        atoms = list(atom_counts.keys())
+        for atom in reversed(order):
+            if atom in atoms:
+                atoms.remove(atom)
+                atoms.insert(0, atom)
         formula = ""
-        if 'C' in atom_counts:
-            formula += f"C{atom_counts['C']}"
-        if 'H' in atom_counts:
-            formula += f"H{atom_counts['H']}"
-        if 'O' in atom_counts:
-            formula += f"O{atom_counts['O']}"
-        if 'N' in atom_counts:
-            formula += f"N{atom_counts['N']}"
-        for k, v in atom_counts.items():
-            if k in ['C', 'H', 'O', 'N']:
-                continue
-            formula += f'{k}{v}'
-        return f"<Specie {formula}>"
+        for atom in atoms:
+            count = atom_counts[atom]
+            if count > 1:
+                formula += f"{atom}{count}"
+            else:
+                formula += atom
+        return formula
 
 # Subclass the GraphMatcher to check for semantic feasibility
 class ChemicalVF2(nx.algorithms.isomorphism.GraphMatcher):
