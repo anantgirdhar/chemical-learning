@@ -12,22 +12,26 @@ import importlib
 import os
 import pickle
 
-# Create the datastructure that will store the reaction data
+from cgt import Specie
+from reaction import Reaction
+
+# Create the datastructures that will store the reaction data
 entries = []
-species = []
+species = {}
 
 # Define some functions that can be used to parse the library quickly
 
 def entry(index, label, degeneracy=None, kinetics=None, duplicate=False, reversible=True, elementary_high_p=False, longDesc=None, shortDesc=None, allow_max_rate_violation=None, allow_pdep_route=None, reference=None, referenceType=None):
     """Each reaction is expressed as an "entry" in the library"""
-    entries.append({
+    rxn_data = {
             'rxn_string': label,
             'kinetics_type': kinetics[0],
             'kinetics': kinetics[1],
             'degeneracy': degeneracy,
             'duplicate': duplicate,
             'elementary_high_p': elementary_high_p,
-            })
+            }
+    entries.append(Reaction(species_dictionary=species, **rxn_data))
 
 def Article(*args, **kwargs):
     return None
@@ -85,51 +89,26 @@ def Chebyshev(coeffs, kunits, Tmin, Tmax, Pmin, Pmax):
 
 # Do the parsing
 
-def count_atoms(graph_lines):
-    """Get the atom counts from the chemical adjacency graph"""
-    atom_counts = {}
-    for line in graph_lines:
-        atom = line.split()[1]
-        if atom in atom_counts:
-            atom_counts[atom] += 1
-        else:
-            atom_counts[atom] = 1
-    return atom_counts
-
 def load_species(dictionary_file):
     """Read an RMG dictionary file and load species information"""
     global species
     species = {}
     with open(dictionary_file, 'r') as f:
-        start_new_species = True  # indicates the start of a new species
-        name = None
+        adj_list = []
         for line in f:
             line = line.strip()
-            if start_new_species is True and line != "":
-                name = line
-                multiplicity = None
-                graph_lines = []
-                start_new_species = False
-            elif line == "" and name is not None:
-                # this is the end of the species
-                species[name] = {
-                        'multiplicity': multiplicity,
-                        'graph': graph_lines,
-                        'atom_counts': count_atoms(graph_lines),
-                        }
-                name = None
-                start_new_species = True
-            elif line.startswith("multiplicity"):
-                # Add the multiplicity
-                multiplicity = int(line.split(" ")[1])
+            if line == "" and len(adj_list) < 1:
+                # No new specie has been found so far
+                continue
+            elif line == "":
+                # We've reached the end of the specie
+                # Create a species object
+                name = adj_list[0]
+                species[name] = Specie(adj_list)
+                adj_list = []  # Reset the adj_list
             else:
                 # This is part of the species
-                # Check that the line number matches the next one in the series
-                line_num = int(line.split(' ')[0])
-                if line_num != len(graph_lines) + 1:
-                    # Something went wrong
-                    raise ValueError(f'Incorrect line number for species {name}')
-                graph_lines.append(line)
+                adj_list.append(line)
 
 def parse(library_path):
     """Parse the RMG kinetics library
@@ -138,6 +117,7 @@ def parse(library_path):
     reaction.py file for the library.
     """
     global entries
+    global species
     entries = []
     if not os.path.isdir(library_path):
         raise NotADirectoryError(f'{library_path} is not a valid directory')
