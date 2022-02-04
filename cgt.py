@@ -9,38 +9,45 @@ import matplotlib.pyplot as plt
 
 class Specie():
     def __init__(self, adj_list):
-        self.G = self._parse_adj_list(adj_list)
+        self._parse_adj_list(adj_list)
 
     def _parse_adj_list(self, adj_list):
         """Parse a chemical adjacency list"""
-        g = {}
+        atoms = []
+        bonds = []
         if isinstance(adj_list, str):
             adj_list = adj_list.splitlines()
         for line in adj_list:
-            if line.split(' ')[0].isdigit():
-                line = line.strip().split()
-                atom_number = int(line[0])
-                g[atom_number] = {
-                        'atom_type': line[1],
-                        'u': int(line[2][1:]),
-                        'p': int(line[3][1:]),
-                        'c': int(line[4][1:]),
-                        'bonds': [],
-                        }
-                for bonds in line[5:]:
-                    to_atom, bond_type = bonds.split(',')
+            line = line.strip()
+            tokens = line.split()
+            if len(tokens) == 1:
+                # This is just the name that is in the file
+                self._name = tokens[0]
+            elif tokens[0] == 'multiplicity':
+                self.multiplicity = int(tokens[1])
+            elif tokens[0].isdigit():
+                atom_number = int(tokens[0])
+                atoms.append((atom_number, {
+                    'atom': tokens[1],
+                    'u': int(tokens[2][1:]),
+                    'p': int(tokens[3][1:]),
+                    'c': int(tokens[4][1:]),
+                    }))
+                for t in tokens[5:]:
+                    to_atom, bond_type = t.split(',')
                     to_atom = to_atom[1:]  # remove the leading '{'
                     to_atom = int(to_atom)
                     bond_type = bond_type[:-1]  # remove the trailing '}'
-                    g[atom_number]['bonds'].append((to_atom, bond_type))
-        # Create the list of bonds for easy creation
-        bond_list = [(from_atom, to_atom, {'type': bond_type}) for from_atom in g.keys() for to_atom, bond_type in g[from_atom]['bonds'] if from_atom < to_atom]
-        # print(bond_list)
+                    if atom_number < to_atom:
+                        # Only include bonds from the smaller number to the
+                        # larger number
+                        # Since bonds are, in graph theory terms, undirected
+                        # edges, we don't need to include it in both directions
+                        bonds.append((atom_number, to_atom, {'type': bond_type}))
         # Now create the graph
-        G = nx.Graph()
-        G.add_nodes_from([(k, {'atom': g[k]['atom_type']}) for k in g.keys()])
-        G.add_edges_from(bond_list)
-        return G
+        self.G = nx.Graph()
+        self.G.add_nodes_from(atoms)
+        self.G.add_edges_from(bonds)
 
     def plot(self, block=True):
         plt.figure()
