@@ -39,7 +39,7 @@ def Article(*args, **kwargs):
 def Arrhenius(A, n, Ea, T0, Tmin=None, Tmax=None, comment=None, Pmin=None, Pmax=None):
     return 'Arrhenius', {'A': A, 'n': n, 'Ea': Ea, 'T0': T0, 'Tmin': Tmin, 'Tmax': Tmax, 'Pmin': Pmin, 'Pmax': Pmax}
 
-def MultiArrhenius(arrhenius):
+def MultiArrhenius(arrhenius, comment=None):
     return 'MultiArrhenius', [a[1] for a in arrhenius]
 
 def ThirdBody(arrheniusLow, efficiencies=None, comment=None):
