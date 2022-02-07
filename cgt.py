@@ -8,8 +8,10 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 class Specie():
-    def __init__(self, adj_list):
+    def __init__(self, adj_list, name=None):
         self._parse_adj_list(adj_list)
+        if name is not None:
+            self.name = name
 
     def _parse_adj_list(self, adj_list):
         """Parse a chemical adjacency list"""
@@ -22,7 +24,7 @@ class Specie():
             tokens = line.split()
             if len(tokens) == 1:
                 # This is just the name that is in the file
-                self._name = tokens[0]
+                self.name = tokens[0]
             elif tokens[0] == 'multiplicity':
                 self.multiplicity = int(tokens[1])
             elif tokens[0].isdigit():
@@ -126,9 +128,11 @@ class Specie():
 class ChemicalVF2(nx.algorithms.isomorphism.GraphMatcher):
     def semantic_feasibility(self, n, m):
         if self.G1.nodes[n] != self.G2.nodes[m]:
+            # print(f'nodes {n} and {m} mismatch')
             return False
         for n_prime, m_prime in self.core_1.items():
             if (n, n_prime) in self.G1.edges():
                 if self.G1.edges()[n, n_prime] != self.G2.edges()[m, m_prime]:
+                    # print(f'edge ({n}, {n_prime}) ~= ({m}, {m_prime})')
                     return False
         return True
