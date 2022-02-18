@@ -20,8 +20,7 @@ class ArrheniusDataset(Dataset):
     def __init__(self):
         self._load_data('arrhenius.dataset')
         x = self.df[['reactant1', 'reactant2', 'product1', 'product2']].values
-        # y = self.df[['A', 'b', 'Ea']].values
-        y = self.df[['b', 'Ea']].values
+        y = self.df[['A', 'b', 'Ea']].values
         self._x = torch.tensor(x)
         self._y = torch.tensor(y)
         self.standardize()
@@ -51,8 +50,8 @@ class ArrheniusDataset(Dataset):
         # Create a copy of the outputs
         self.y = self._y.detach().clone()
         # Normalize the outputs
-        # logA = np.log(self.y[:, 0])
-        # self.y[:, 0] = logA
+        logA = np.log(self.y[:, 0])
+        self.y[:, 0] = logA
         self._minimum = self.y.min(dim=0).values
         self._maximum = self.y.max(dim=0).values
         self.y = (self.y - self._minimum) / (self._maximum - self._minimum)
@@ -66,7 +65,7 @@ class ArrheniusDataset(Dataset):
         # Undo the standardization
         y = y * (self._maximum - self._minimum) + self._minimum
         # Undo the logarithm of the pre-exponential factor
-        # y[:, 0] = np.exp(y[:, 0])
+        y[:, 0] = np.exp(y[:, 0])
         #TODO: This doesn't work as expected in the first column
         return y
 
