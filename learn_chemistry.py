@@ -117,9 +117,24 @@ class ArrheniusNet(nn.Module):
         layers['reluout'] = nn.ReLU()
         # Create the network
         self.linear_relu_stack = nn.Sequential(layers)
+        # Store the model parameters to help create a project name later
+        self._num_layers = num_layers
+        self._num_inputs = num_inputs
+        self._nodes_per_layer = nodes_per_layer
+        self._num_outputs = num_outputs
 
     def forward(self, x):
         return self.linear_relu_stack(x)
+
+    @property
+    def project_name(self):
+        return (
+                f'ArrheniusNet'
+                + f'_nl{self._num_layers}'
+                + f'_in{self._num_inputs}'
+                + f'_npl{self._nodes_per_layer}'
+                + f'_out{self._num_outputs}'
+                )
 
 def train(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
