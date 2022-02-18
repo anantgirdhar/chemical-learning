@@ -101,7 +101,7 @@ class ArrheniusNet(nn.Module):
     products. The reactants and products are provided as one-hot encoded
     vectors.
     """
-    def __init__(self, num_layers, num_inputs, nodes_per_layer, num_outputs=3):
+    def __init__(self, num_layers, num_inputs, nodes_per_layer, num_outputs):
         super().__init__()
         layers = OrderedDict()
         # Add the input layer
@@ -154,10 +154,11 @@ def train(dataloader, model, loss_fn, optimizer):
         loss.backward()
         optimizer.step()
         loss_val, current = loss.item(), current + len(X)
-        if batch % print_every == 0:
-            print(f'loss: {loss:>7f} [{current:>5d}/{size:>5d}]')
+        # if batch % print_every == 0:
+    print(f'loss: {loss:>7f} [{current:>5d}/{size:>5d}]')
+    return loss
 
-def test(dataloader, model, loss_fn):
+def test(dataloader, model, loss_fn, print_comparison=False):
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
     model.eval()
@@ -166,32 +167,59 @@ def test(dataloader, model, loss_fn):
         for X, y in dataloader:
             X, y = X.to(device).float(), y.to(device).float()
             pred = model(X)
+            if print_comparison:
+                print('Comparison (true vs estimated):')
+                for true, estimate in zip(y, pred):
+                    print(f'  {true} - {estimate} (diff = {true - estimate})')
             test_loss += loss_fn(pred, y).item()
             # correct += (pred.argmax(1) == y).type(torch.float).sum().item()
     test_loss /= num_batches
     # correct /= size
     # print(f'Test error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n')
-    print(f'Test error: \n Avg loss per batch: {test_loss:>8f} \n')
+    print(f'Test error: Avg loss per batch: {test_loss:>8f} \n')
 
-def main(epochs=20):
+def save_state(model, optimizer, loss_fn, project_name, epochs=None):
+    torch.save({
+        'epochs': epochs,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss_fn': loss_fn,
+        }, project_name + '.pth')
+
+def initialize_learning_objects(ads, resume=True, num_layers=5, nodes_per_layer=128):
+    ann = ArrheniusNet(
+            num_layers=num_layers,
+            num_inputs=ads.num_inputs,
+            nodes_per_layer=nodes_per_layer,
+            num_outputs=ads.num_outputs,
+            )
+    loss_fn = nn.MSELoss()
+    optimizer = optim.Adam(ann.parameters(), lr=1e-3)
+    project_name = ann.project_name
+    if resume and os.path.isfile(f'{project_name}.pth'):
+        checkpoint = torch.load(f'{project_name}.pth')
+        ann.load_state_dict(checkpoint['model_state_dict'])
+        print('Previously trained model weights state_dict loaded.')
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print('Previously trained optimizer state_dict loaded.')
+        loss_fn = checkpoint['loss_fn']
+        print('Trained model loss function loaded.')
+    return ann, optimizer, loss_fn
+
+def initialize_data_objects(training_percent=0.8, batch_size=64):
     ads = ArrheniusDataset()
     # Split into training and testing data
     train_size = int(0.8 * len(ads))
     test_size = len(ads) - train_size
     train_dataset, test_dataset = random_split(ads, [train_size, test_size])
     # Create the DataLoaders
-    batch_size = 64
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size)
-    # Create the Neural Network
-    ann = ArrheniusNet(
-            num_layers=2,
-            num_inputs=ads.num_inputs,
-            nodes_per_layer=64,
-            num_outputs=ads.num_outputs,
-            )
-    loss_fn = nn.MSELoss()
-    optimizer = optim.Adam(ann.parameters(), lr=1e-3)
+    return train_dataloader, test_dataloader
+
+def main(epochs=20, resume=True):
+    train_dataloader, test_dataloader = initialize_data_objects()
+    ann, optimizer, loss_fn = initialize_learning_objects(ads, resume=resume)
     for _ in range(epochs):
         train(train_dataloader, ann, loss_fn, optimizer)
         test(test_dataloader, ann, loss_fn)
