@@ -136,55 +136,80 @@ class ArrheniusNet(nn.Module):
                 + f'_out{self._num_outputs}'
                 )
 
-def train(dataloader, model, loss_fn, optimizer):
-    size = len(dataloader.dataset)
-    num_batches = len(dataloader)
-    print(f'dataloader {size = }')
-    # We want to print the loss information about 10 times per training run
-    # Compute how many batches to print the loss after
-    print_every = int(num_batches / 10)
-    # Begin training
-    model.train()
-    current = 0  # the current
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device).float(), y.to(device).float()
-        pred = model(X)
-        loss = loss_fn(pred, y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        loss_val, current = loss.item(), current + len(X)
-        # if batch % print_every == 0:
-    print(f'loss: {loss:>7f} [{current:>5d}/{size:>5d}]')
-    return loss
+class TrainingManager:
 
-def test(dataloader, model, loss_fn, print_comparison=False):
-    size = len(dataloader.dataset)
-    num_batches = len(dataloader)
-    model.eval()
-    test_loss, correct = 0, 0
-    with torch.no_grad():
-        for X, y in dataloader:
+    def __init__(self, model=None, loss_fn=None, optimizer=None, training_dataloader=None, testing_dataloader=None, load_project=True):
+        self.model = model
+        self.loss_fn = loss_fn
+        self.optimizer = optimizer
+        self.training_dataloader = training_dataloader
+        self.testing_dataloader = testing_dataloader
+        self.epoch = 0
+        self.training_loss = []
+        self.testing_loss = []
+        if load_project:
+            self.load(model.project_name)
+
+    def train_one_epoch(self):
+        size = len(self.training_dataloader.dataset)
+        num_batches = len(self.training_dataloader)
+        # Begin training
+        running_loss = 0.
+        self.model.train()
+        for batch, (X, y) in enumerate(self.dataloader):
             X, y = X.to(device).float(), y.to(device).float()
-            pred = model(X)
-            if print_comparison:
-                print('Comparison (true vs estimated):')
-                for true, estimate in zip(y, pred):
-                    print(f'  {true} - {estimate} (diff = {true - estimate})')
-            test_loss += loss_fn(pred, y).item()
-            # correct += (pred.argmax(1) == y).type(torch.float).sum().item()
-    test_loss /= num_batches
-    # correct /= size
-    # print(f'Test error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n')
-    print(f'Test error: Avg loss per batch: {test_loss:>8f} \n')
+            pred = self.model(X)
+            loss = self.loss_fn(pred, y)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            running_loss += loss.item()
+        # Compute the loss per record to compare it with the testing loss
+        self.training_loss.append(running_loss / size)
+        self.epoch += 1
 
-def save_state(model, optimizer, loss_fn, project_name, epochs=None):
-    torch.save({
-        'epochs': epochs,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss_fn': loss_fn,
-        }, project_name + '.pth')
+    def test(self, print_comparison=False):
+        size = len(self.testing_dataloader.dataset)
+        num_batches = len(self.testing_dataloader)
+        self.model.eval()
+        running_loss = 0.
+        with torch.no_grad():
+            for X, y in self.testing_dataloader:
+                X, y = X.to(device).float(), y.to(device).float()
+                pred = self.model(X)
+                if print_comparison:
+                    print('Comparison (true vs estimated):')
+                    for true, estimate in zip(y, pred):
+                        print(f'  {true} - {estimate} (diff = {true - estimate})')
+                running_loss += self.loss_fn(pred, y).item()
+        # Compute the loss per record to compare it with the training loss
+        self.testing_loss.append(running_loss / size)
+
+    def save(model, optimizer, loss_fn, project_name, epochs=None):
+        torch.save({
+            'epochs': self.epochs,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'loss_fn': self.loss_fn,
+            'training_loss': self.training_loss,
+            'testing_loss': self.testing_loss,
+            }, project_name + '.pth')
+
+    def load(self, project_name):
+        checkpoint = torch.load(f'{project_name}.pth')
+        self.epoch = checkpoint['epochs']
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        print('Previously trained model weights state_dict loaded.')
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print('Previously trained optimizer state_dict loaded.')
+        self.loss_fn = checkpoint['loss_fn']
+        print('Trained model loss function loaded.')
+
+#TODO: START HERE
+# Create an instance of the TrainingManager
+# Try to train, save, load, train
+# Check how to initialize the learning objects
+# Data objects can still be initialized outside
 
 def initialize_learning_objects(ads, resume=True, num_layers=5, nodes_per_layer=128):
     ann = ArrheniusNet(
