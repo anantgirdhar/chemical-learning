@@ -238,6 +238,7 @@ def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128):
 def initialize_data_objects(training_percent=0.8, batch_size=64):
     ads = ArrheniusDataset()
     # Split into training and testing data
+    torch.manual_seed(0)
     train_size = int(0.8 * len(ads))
     test_size = len(ads) - train_size
     train_dataset, test_dataset = random_split(ads, [train_size, test_size])
