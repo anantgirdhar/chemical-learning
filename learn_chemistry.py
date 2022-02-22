@@ -2,6 +2,7 @@ from collections import OrderedDict
 import sys
 import os
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pickle
@@ -217,6 +218,21 @@ class TrainingManager:
             self.training_loss = checkpoint['training_loss']
             self.testing_loss = checkpoint['testing_loss']
             print(f'Last loss: training {self.training_loss[-1]:.3e} | Testing {self.testing_loss[-1]:.3e}')
+
+    def plot_loss(self, log_scale=True):
+        plt.figure()
+        if log_scale:
+            plt.semilogy(range(1, self.epoch+1), self.training_loss,'bo-', label='train loss')
+            plt.semilogy(range(1, self.epoch+1), self.testing_loss,'rx-', label='test loss')
+        else:
+            plt.plot(range(1, self.epoch+1), self.training_loss,'bo-', label='train loss')
+            plt.plot(range(1, self.epoch+1), self.testing_loss,'rx-', label='test loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend(loc='best')
+        plt.title(self.project_name)
+        plt.savefig(self.project_name + '_loss.png')
+        plt.show()
 
 #TODO: START HERE
 # Create an instance of the TrainingManager
