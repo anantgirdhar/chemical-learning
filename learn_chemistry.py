@@ -147,16 +147,17 @@ class TrainingManager:
         self.epoch = 0
         self.training_loss = []
         self.testing_loss = []
+        self.project_name = model.project_name
         if load_project:
             self.load(model.project_name)
 
-    def train_one_epoch(self):
+    def _train_one_epoch(self):
         size = len(self.training_dataloader.dataset)
         num_batches = len(self.training_dataloader)
         # Begin training
         running_loss = 0.
         self.model.train()
-        for batch, (X, y) in enumerate(self.dataloader):
+        for batch, (X, y) in enumerate(self.training_dataloader):
             X, y = X.to(device).float(), y.to(device).float()
             pred = self.model(X)
             loss = self.loss_fn(pred, y)
@@ -168,7 +169,7 @@ class TrainingManager:
         self.training_loss.append(running_loss / size)
         self.epoch += 1
 
-    def test(self, print_comparison=False):
+    def _test(self, print_comparison=False):
         size = len(self.testing_dataloader.dataset)
         num_batches = len(self.testing_dataloader)
         self.model.eval()
@@ -185,25 +186,37 @@ class TrainingManager:
         # Compute the loss per record to compare it with the training loss
         self.testing_loss.append(running_loss / size)
 
-    def save(model, optimizer, loss_fn, project_name, epochs=None):
+    def train_loop(self, epochs):
+        for i in range(epochs):
+            self._train_one_epoch()
+            self._test()
+            print(f'Epoch {self.epoch:03d} - Training {self.training_loss[-1]:.3e} | Testing {self.testing_loss[-1]:.3e}')
+
+    def save(self):
         torch.save({
-            'epochs': self.epochs,
+            'epochs': self.epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'loss_fn': self.loss_fn,
             'training_loss': self.training_loss,
             'testing_loss': self.testing_loss,
-            }, project_name + '.pth')
+            }, self.project_name + '.pth')
 
     def load(self, project_name):
-        checkpoint = torch.load(f'{project_name}.pth')
-        self.epoch = checkpoint['epochs']
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        print('Previously trained model weights state_dict loaded.')
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        print('Previously trained optimizer state_dict loaded.')
-        self.loss_fn = checkpoint['loss_fn']
-        print('Trained model loss function loaded.')
+        if os.path.isfile(self.project_name + '.pth'):
+            checkpoint = torch.load(self.project_name + '.pth')
+            print(f'Reading {self.project_name}.pth')
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            print('Previously trained model weights state_dict loaded.')
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            print('Previously trained optimizer state_dict loaded.')
+            self.loss_fn = checkpoint['loss_fn']
+            print('Trained model loss function loaded.')
+            self.epoch = checkpoint['epochs']
+            print(f'Model has been trained for {self.epoch} epochs')
+            self.training_loss = checkpoint['training_loss']
+            self.testing_loss = checkpoint['testing_loss']
+            print(f'Last loss: training {self.training_loss[-1]:.3e} | Testing {self.testing_loss[-1]:.3e}')
 
 #TODO: START HERE
 # Create an instance of the TrainingManager
@@ -211,7 +224,7 @@ class TrainingManager:
 # Check how to initialize the learning objects
 # Data objects can still be initialized outside
 
-def initialize_learning_objects(ads, resume=True, num_layers=5, nodes_per_layer=128):
+def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128):
     ann = ArrheniusNet(
             num_layers=num_layers,
             num_inputs=ads.num_inputs,
@@ -220,15 +233,6 @@ def initialize_learning_objects(ads, resume=True, num_layers=5, nodes_per_layer=
             )
     loss_fn = nn.MSELoss()
     optimizer = optim.Adam(ann.parameters(), lr=1e-3)
-    project_name = ann.project_name
-    if resume and os.path.isfile(f'{project_name}.pth'):
-        checkpoint = torch.load(f'{project_name}.pth')
-        ann.load_state_dict(checkpoint['model_state_dict'])
-        print('Previously trained model weights state_dict loaded.')
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        print('Previously trained optimizer state_dict loaded.')
-        loss_fn = checkpoint['loss_fn']
-        print('Trained model loss function loaded.')
     return ann, optimizer, loss_fn
 
 def initialize_data_objects(training_percent=0.8, batch_size=64):
@@ -240,12 +244,12 @@ def initialize_data_objects(training_percent=0.8, batch_size=64):
     # Create the DataLoaders
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size)
-    return train_dataloader, test_dataloader
+    return ads, train_dataloader, test_dataloader
 
-def main(epochs=20, resume=True):
-    train_dataloader, test_dataloader = initialize_data_objects()
-    ann, optimizer, loss_fn = initialize_learning_objects(ads, resume=resume)
-    for _ in range(epochs):
-        train(train_dataloader, ann, loss_fn, optimizer)
-        test(test_dataloader, ann, loss_fn)
-    return ann, optimizer, loss_fn, train_dataloader, test_dataloader
+def main(epochs=20, resume=False):
+    ads, train_dataloader, test_dataloader = initialize_data_objects()
+    ann, optimizer, loss_fn = initialize_learning_objects(ads)
+    tm = TrainingManager(ann, loss_fn, optimizer, train_dataloader, test_dataloader, load_project=resume)
+    tm.train_loop(epochs)
+    tm.save()
+    return tm
