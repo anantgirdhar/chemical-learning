@@ -131,10 +131,10 @@ class ArrheniusNet(nn.Module):
     def project_name(self):
         return (
                 f'ArrheniusNet'
-                + f'_nl{self._num_layers}'
                 + f'_in{self._num_inputs}'
-                + f'_npl{self._nodes_per_layer}'
                 + f'_out{self._num_outputs}'
+                + f'_nl{self._num_layers}'
+                + f'_npl{self._nodes_per_layer}'
                 )
 
 class TrainingManager:
