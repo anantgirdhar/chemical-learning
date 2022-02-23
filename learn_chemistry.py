@@ -289,3 +289,12 @@ def main(num_layers=5, nodes_per_layer=128, epochs=40, include_atom_counts=False
     tm.train_loop(epochs)
     tm.save()
     return tm
+
+def run_multiple_models():
+    for num_layers in [4, 5, 6]:
+        for nodes_per_layer in [64, 128, 256]:
+            for include_atom_counts in [True, False]:
+                last_train_loss = 1e6
+                last_test_loss = 1e6
+                tm = main(num_layers=num_layers, nodes_per_layer=nodes_per_layer, epochs=40, include_atom_counts=include_atom_counts, resume=False)
+                tm.plot_loss(show=False)
