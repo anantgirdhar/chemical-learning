@@ -184,6 +184,20 @@ class TrainingManager:
         self.training_loss.append(running_loss / size)
         self.epoch += 1
 
+    def get_evals(self):
+        self.model.eval()
+        plt.subplots(1, 3, sharey=True)
+        for batch, (X, y) in enumerate(self.training_dataloader):
+            X, y = X.to(device).float(), y.to(device).float()
+            pred = self.model(X)
+            plt.subplot(131)
+            plt.plot(y[:, 0].detach().numpy(), pred[:, 0].detach().numpy(), 'x')
+            plt.subplot(132)
+            plt.plot(y[:, 1].detach().numpy(), pred[:, 1].detach().numpy(), 'x')
+            plt.subplot(133)
+            plt.plot(y[:, 2].detach().numpy(), pred[:, 2].detach().numpy(), 'x')
+        plt.show()
+
     def _test(self, print_comparison=False):
         size = len(self.testing_dataloader.dataset)
         num_batches = len(self.testing_dataloader)
