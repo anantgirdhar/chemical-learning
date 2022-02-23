@@ -18,9 +18,15 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'Using device {device}')
 
 class ArrheniusDataset(Dataset):
-    def __init__(self):
+    def __init__(self, include_atom_counts=False):
         self._load_data('arrhenius.dataset')
-        x = self.df[['reactant1', 'reactant2', 'product1', 'product2']].values
+        features = ['reactant1', 'reactant2', 'product1', 'product2']
+        if include_atom_counts:
+            atom_count_headers_prefix = ['r1', 'r2', 'p1', 'p2']
+            atom_count_headers_suffix = ['C', 'H', 'O', 'N', 'Ar', 'He', 'Cl', 'S', 'I', 'Si']
+            for sp in atom_count_headers_prefix:
+                features.extend([sp + atom for atom in atom_count_headers_suffix])
+        x = self.df[features].values
         y = self.df[['A', 'b', 'Ea']].values
         self._x = torch.tensor(x)
         self._y = torch.tensor(y)
@@ -37,9 +43,10 @@ class ArrheniusDataset(Dataset):
     def standardize(self):
         """Standardize the inputs and outputs
 
-        The inputs are categorial integers representing the appropriate specie
-        participating in the reaction. These are converted to one hot encoded
-        vectors.
+        The first four inputs are categorial integers representing the
+        appropriate specie participating in the reaction. These are converted
+        to one hot encoded vectors. All following inputs are integers
+        representing atom counts.
 
         The outputs are floating point numbers that need to be rescaled to be
         able to make sense of them. The pre-exponential factor has a large
@@ -47,7 +54,9 @@ class ArrheniusDataset(Dataset):
         normalizing.
         """
         # Do the one hot encoding
-        self.x = F.one_hot(self._x)
+        x1 = F.one_hot(self._x[:, :4], num_classes=len(self.species_map))
+        x1 = torch.flatten(x1, start_dim=1)
+        self.x = torch.concat([x1, self._x[:, 4:]], dim=1)
         # Create a copy of the outputs
         self.y = self._y.detach().clone()
         # Normalize the outputs
@@ -73,20 +82,25 @@ class ArrheniusDataset(Dataset):
     def _load_data(self, filename):
         if os.path.isfile(filename):
             with open(filename, 'rb') as f:
-                self.df, self._species = pickle.load(f)
+                self.df, self.species_map = pickle.load(f)
         else:
             # The pickle file doesn't exist - preprocess data and store it
             self._preprocess_data(filename, filename.replace('.dataset', '.csv'))
 
     def _preprocess_data(self, pickle_filename, csv_filename):
+        # Load the data
         self.df = pd.read_csv(csv_filename)
+        if not os.path.isfile('species_map.p'):
+            raise ValueError('species_map.p not found')
+        with open('species_map.p', 'rb') as f:
+            self.species_map = pickle.load(f)
+        f = lambda x: self.species_map.index(x)
+        # Transform the data
         df_species = self.df[['reactant1', 'reactant2', 'product1', 'product2']]
-        self._species = pd.concat([df_species[col] for col in df_species.columns]).unique()
-        f = lambda x: np.where(self._species == x)[0][0]
         df_species = df_species.applymap(f)
         self.df[df_species.columns] = df_species
         with open(pickle_filename, 'wb') as f:
-            pickle.dump((self.df, self._species), f)
+            pickle.dump((self.df, self.species_map), f)
 
     def __len__(self):
         return len(self.y)
@@ -106,7 +120,7 @@ class ArrheniusNet(nn.Module):
         super().__init__()
         layers = OrderedDict()
         # Add the input layer
-        layers['flatten'] = nn.Flatten()
+        # layers['flatten'] = nn.Flatten()
         layers['input'] = nn.Linear(num_inputs, nodes_per_layer)
         layers['relu0'] = nn.ReLU()
         # Add the hidden layers
@@ -256,8 +270,8 @@ def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128):
     optimizer = optim.Adam(ann.parameters(), lr=1e-3)
     return ann, optimizer, loss_fn
 
-def initialize_data_objects(training_percent=0.8, batch_size=64):
-    ads = ArrheniusDataset()
+def initialize_data_objects(training_percent=0.8, batch_size=64, include_atom_counts=False):
+    ads = ArrheniusDataset(include_atom_counts)
     # Split into training and testing data
     torch.manual_seed(0)
     train_size = int(0.8 * len(ads))
@@ -268,9 +282,9 @@ def initialize_data_objects(training_percent=0.8, batch_size=64):
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size)
     return ads, train_dataloader, test_dataloader
 
-def main(epochs=20, resume=False):
-    ads, train_dataloader, test_dataloader = initialize_data_objects()
-    ann, optimizer, loss_fn = initialize_learning_objects(ads)
+def main(num_layers=5, nodes_per_layer=128, epochs=40, include_atom_counts=False, resume=False):
+    ads, train_dataloader, test_dataloader = initialize_data_objects(include_atom_counts=include_atom_counts)
+    ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer)
     tm = TrainingManager(ann, loss_fn, optimizer, train_dataloader, test_dataloader, load_project=resume)
     tm.train_loop(epochs)
     tm.save()

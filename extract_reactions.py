@@ -83,6 +83,12 @@ def arrhenius_to_csv(arrhenius_pickle, output_csv):
         entries, species = pickle.load(f)
     # Create the header
     header = ['reactant1', 'reactant2', 'product1', 'product2', 'A', 'b', 'Ea', 'duplicate', 'degeneracy', 'elementary_high_p']
+    atoms = ['C', 'H', 'O', 'N', 'Ar', 'He', 'N', 'Cl', 'S', 'I', 'Si']
+    atom_count_headers_prefix = ['r1', 'r2', 'p1', 'p2']
+    atom_count_headers_suffix = ['C', 'H', 'O', 'N', 'Ar', 'He', 'Cl', 'S', 'I', 'Si']
+    for sp in atom_count_headers_prefix:
+        header.extend([sp + atom for atom in atom_count_headers_suffix])
+    # Now create the rows
     rows = [header, ]
     for e in entries:
         # Get the species information from the reaction
@@ -93,6 +99,16 @@ def arrhenius_to_csv(arrhenius_pickle, output_csv):
         reac2 = e.reactants[1].name
         prod1 = e.products[0].name
         prod2 = e.products[1].name
+        # Get the atom counts
+        overall_atom_counts = {}
+        # First initialize all atom counts to 0
+        for sp in atom_count_headers_prefix:
+            for atom in atom_count_headers_suffix:
+                overall_atom_counts[sp + atom] = 0
+        # Next get the values from the various species objects
+        for sp in atom_count_headers_prefix:
+            for atom, count in e.reactants[0].atom_counts.items():
+                overall_atom_counts[sp + atom] = count
         # Make sure that the units of everything else are good
         # Get pre exponential factor in cm, mol, s units
         # Get activation energy in cal/mol units
@@ -120,7 +136,13 @@ def arrhenius_to_csv(arrhenius_pickle, output_csv):
         duplicate = e.duplicate
         elementary_high_p = e.elementary_high_p
         # Put everything into a list
-        row = [reac1, reac2, prod1, prod2, A, n, Ea, duplicate, degeneracy, elementary_high_p]
+        row = [
+                reac1, reac2, prod1, prod2,
+                A, n, Ea,
+                duplicate, degeneracy, elementary_high_p,
+                ]
+        for sp in atom_count_headers_prefix:
+            row.extend([overall_atom_counts[sp + atom] for atom in atom_count_headers_suffix])
         # Append to the rows
         rows.append(row)
     # Write the rows to a csv file
