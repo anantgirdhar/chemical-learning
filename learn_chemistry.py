@@ -219,7 +219,7 @@ class TrainingManager:
             self.testing_loss = checkpoint['testing_loss']
             print(f'Last loss: training {self.training_loss[-1]:.3e} | Testing {self.testing_loss[-1]:.3e}')
 
-    def plot_loss(self, log_scale=True):
+    def plot_loss(self, log_scale=True, show=True):
         plt.figure()
         if log_scale:
             plt.semilogy(range(1, self.epoch+1), self.training_loss,'bo-', label='train loss')
@@ -232,7 +232,12 @@ class TrainingManager:
         plt.legend(loc='best')
         plt.title(self.project_name)
         plt.savefig(self.project_name + '_loss.png')
-        plt.show()
+        if show:
+            plt.show()
+        else:
+            plt.cla()
+            plt.clf()
+            plt.close('all')
 
 #TODO: START HERE
 # Create an instance of the TrainingManager
