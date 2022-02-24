@@ -1,5 +1,9 @@
-# Pickle files
+# Pickle and other project files
 *.p
+*.pth
+*.png
+*.dataset
+*.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
