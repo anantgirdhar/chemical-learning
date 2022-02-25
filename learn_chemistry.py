@@ -187,19 +187,65 @@ class TrainingManager:
         self.training_loss.append(running_loss / size)
         self.epoch += 1
 
-    def get_evals(self):
+    def get_evals(self, data='test', show=True):
         self.model.eval()
+        if data == 'test':
+            X = self.testing_dataset.dataset.x.float()
+            y = self.testing_dataset.dataset.y.float()
+        elif data == 'train':
+            X = self.training_dataset.dataset.x.float()
+            y = self.training_dataset.dataset.y.float()
+        else:
+            raise ValueError(f'Invalid choice for dataset: {data}')
+        pred = self.model(X)
+        # Find the best fit lines
+        line1 = np.poly1d(np.polyfit(
+            y[:, 0].detach().numpy(),
+            pred[:, 0].detach().numpy(),
+            1))
+        line2 = np.poly1d(np.polyfit(
+            y[:, 1].detach().numpy(),
+            pred[:, 1].detach().numpy(),
+            1))
+        line3 = np.poly1d(np.polyfit(
+            y[:, 2].detach().numpy(),
+            pred[:, 2].detach().numpy(),
+            1))
+        # Plot everything
         plt.subplots(1, 3, sharey=True)
-        for batch, (X, y) in enumerate(self.training_dataloader):
-            X, y = X.to(device).float(), y.to(device).float()
-            pred = self.model(X)
-            plt.subplot(131)
-            plt.plot(y[:, 0].detach().numpy(), pred[:, 0].detach().numpy(), 'x')
-            plt.subplot(132)
-            plt.plot(y[:, 1].detach().numpy(), pred[:, 1].detach().numpy(), 'x')
-            plt.subplot(133)
-            plt.plot(y[:, 2].detach().numpy(), pred[:, 2].detach().numpy(), 'x')
-        plt.show()
+        _range = np.linspace(0, 1, 51)
+        plt.subplot(131)
+        plt.plot(y[:, 0].detach().numpy(), pred[:, 0].detach().numpy(), 'bx')
+        plt.plot(_range, line1(_range), 'r-')
+        plt.plot(_range, _range, 'k--')
+        plt.title(line1)
+        plt.xlabel('True value')
+        plt.ylabel('Prediction')
+        plt.xlim([0, 1])
+        plt.ylim([0, 1])
+        plt.subplot(132)
+        plt.plot(y[:, 1].detach().numpy(), pred[:, 1].detach().numpy(), 'bx')
+        plt.plot(_range, line2(_range), 'r-')
+        plt.plot(_range, _range, 'k--')
+        plt.title(line2)
+        plt.xlabel('True value')
+        plt.xlim([0, 1])
+        plt.subplot(133)
+        plt.plot(y[:, 2].detach().numpy(), pred[:, 2].detach().numpy(), 'bx')
+        plt.plot(_range, line3(_range), 'r-',)
+        plt.plot(_range, _range, 'k--')
+        plt.title(line3)
+        plt.xlabel('True value')
+        plt.xlim([0, 1])
+        plt.suptitle(self.project_name + f' [{data}]')
+        plt.savefig(self.project_name + '_pred.png')
+        plt.tight_layout()
+        if show:
+            plt.show()
+        else:
+            plt.cla()
+            plt.clf()
+            plt.close('all')
 
     def _test(self, print_comparison=False):
         size = len(self.testing_dataloader.dataset)
