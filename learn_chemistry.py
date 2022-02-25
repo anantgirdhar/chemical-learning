@@ -153,12 +153,15 @@ class ArrheniusNet(nn.Module):
 
 class TrainingManager:
 
-    def __init__(self, model=None, loss_fn=None, optimizer=None, training_dataloader=None, testing_dataloader=None, load_project=True):
+    def __init__(self, model=None, loss_fn=None, optimizer=None, training_dataset=None, testing_dataset=None, load_project=True, batch_size=64):
         self.model = model
         self.loss_fn = loss_fn
         self.optimizer = optimizer
-        self.training_dataloader = training_dataloader
-        self.testing_dataloader = testing_dataloader
+        self.training_dataset = training_dataset
+        self.testing_dataset = testing_dataset
+        #TODO: Shuffle the data
+        self.training_dataloader = DataLoader(training_dataset, batch_size=batch_size)
+        self.testing_dataloader = DataLoader(testing_dataset, batch_size=batch_size)
         self.epoch = 0
         self.training_loss = []
         self.testing_loss = []
@@ -267,12 +270,6 @@ class TrainingManager:
             plt.clf()
             plt.close('all')
 
-#TODO: START HERE
-# Create an instance of the TrainingManager
-# Try to train, save, load, train
-# Check how to initialize the learning objects
-# Data objects can still be initialized outside
-
 def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128):
     ann = ArrheniusNet(
             num_layers=num_layers,
@@ -291,17 +288,15 @@ def initialize_data_objects(training_percent=0.8, batch_size=64, include_atom_co
     train_size = int(0.8 * len(ads))
     test_size = len(ads) - train_size
     train_dataset, test_dataset = random_split(ads, [train_size, test_size])
-    # Create the DataLoaders
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size)
-    return ads, train_dataloader, test_dataloader
+    return ads, train_dataset, test_dataset
 
 def main(num_layers=5, nodes_per_layer=128, epochs=40, include_atom_counts=False, resume=False):
-    ads, train_dataloader, test_dataloader = initialize_data_objects(include_atom_counts=include_atom_counts)
+    ads, train_dataset, test_dataset = initialize_data_objects(include_atom_counts=include_atom_counts)
     ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer)
-    tm = TrainingManager(ann, loss_fn, optimizer, train_dataloader, test_dataloader, load_project=resume)
-    tm.train_loop(epochs)
-    tm.save()
+    tm = TrainingManager(ann, loss_fn, optimizer, train_dataset, test_dataset, load_project=resume)
+    if not resume:
+        tm.train_loop(epochs)
+        tm.save()
     return tm
 
 def run_multiple_models():
@@ -312,3 +307,7 @@ def run_multiple_models():
                 last_test_loss = 1e6
                 tm = main(num_layers=num_layers, nodes_per_layer=nodes_per_layer, epochs=40, include_atom_counts=include_atom_counts, resume=False)
                 tm.plot_loss(show=False)
+                tm.get_evals(show=False)
+
+if __name__ == "__main__":
+    run_multiple_models()
