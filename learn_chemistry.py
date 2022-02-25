@@ -265,6 +265,7 @@ class TrainingManager:
         self.testing_loss.append(running_loss / size)
 
     def train_loop(self, epochs):
+        print(f'\nTraining model {self.project_name}')
         for i in range(epochs):
             self._train_one_epoch()
             self._test()
@@ -295,6 +296,8 @@ class TrainingManager:
             self.training_loss = checkpoint['training_loss']
             self.testing_loss = checkpoint['testing_loss']
             print(f'Last loss: training {self.training_loss[-1]:.3e} | Testing {self.testing_loss[-1]:.3e}')
+        else:
+            print(f'Tried to load but file {self.project_name}.pth not found.')
 
     def plot_loss(self, log_scale=True, show=True):
         plt.figure()
