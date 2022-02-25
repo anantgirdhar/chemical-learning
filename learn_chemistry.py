@@ -17,6 +17,8 @@ from torch.utils.data import Dataset, DataLoader, random_split
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'Using device {device}')
 
+SUMMARY_FILE='model_summary.csv'
+
 class ArrheniusDataset(Dataset):
     def __init__(self, include_atom_counts=False):
         self._load_data('arrhenius.dataset')
@@ -192,7 +194,7 @@ class TrainingManager:
         self.training_loss.append(running_loss / size)
         self.epoch += 1
 
-    def get_evals(self, data='test', show=True):
+    def get_evals(self, data='test', show=True, save_vals=False):
         self.model.eval()
         if data == 'test':
             X = self.testing_dataset.dataset.x.float()
@@ -255,14 +257,48 @@ class TrainingManager:
         plt.xlabel('True value')
         plt.xlim([0, 1])
         plt.suptitle(self.project_name + f' [{data}]')
-        plt.savefig(self.project_name + '_pred.png')
         plt.tight_layout()
+        if save_vals or not show:
+            plt.savefig(self.project_name + f'_pred_{data}.png')
         if show:
             plt.show()
         else:
             plt.cla()
             plt.clf()
             plt.close('all')
+        if save_vals:
+            if not os.path.isfile(SUMMARY_FILE):
+                with open(SUMMARY_FILE, 'w') as f:
+                    f.write(','.join([
+                        'net',
+                        'inputs', 'outputs',
+                        'nl', 'npl',
+                        'dropout',
+                        'data',
+                        'epoch',
+                        'training_loss', 'testing_loss',
+                        'PC1', 'PC2', 'PC3',
+                        'Avg_PC',
+                        'm1', 'b1', 'm2', 'b2', 'm3', 'b3',
+                        ]))
+                    f.write('\n')
+            row = [
+                    type(self.model).__name__,
+                    self.model._num_inputs, self.model._num_outputs,
+                    self.model._num_layers, self.model._nodes_per_layer,
+                    self.model._dropout,
+                    data,
+                    self.epoch,
+                    self.training_loss[-1], self.testing_loss[-1],
+                    ]
+            row.extend(pearson_coefficients)
+            row.append(avg_pearson)
+            row.extend(list(line1.coefficients))
+            row.extend(list(line2.coefficients))
+            row.extend(list(line3.coefficients))
+            with open(SUMMARY_FILE, 'a') as f:
+                f.write(','.join([str(i) for i in row]))
+                f.write('\n')
 
     def _test(self, print_comparison=False):
         size = len(self.testing_dataloader.dataset)
@@ -368,14 +404,15 @@ def main(num_layers=5, nodes_per_layer=128, epochs=40, include_dropout=False, in
 
 def run_multiple_models():
     for num_layers in [4, 5, 6]:
-        for nodes_per_layer in [64, 128, 256]:
+        for nodes_per_layer in [64, 128, 256, 512]:
             for include_atom_counts in [True, False]:
                 for include_dropout in [True, False]:
                     last_train_loss = 1e6
                     last_test_loss = 1e6
                     tm = main(num_layers=num_layers, nodes_per_layer=nodes_per_layer, epochs=20, include_dropout=include_dropout, include_atom_counts=include_atom_counts, resume=False)
                     tm.plot_loss(show=False)
-                    tm.get_evals(show=False)
+                    tm.get_evals(data='test', show=False, save_vals=True)
+                    tm.get_evals(data='train', show=False, save_vals=True)
 
 if __name__ == "__main__":
     run_multiple_models()
