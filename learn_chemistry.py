@@ -116,19 +116,22 @@ class ArrheniusNet(nn.Module):
     products. The reactants and products are provided as one-hot encoded
     vectors.
     """
-    def __init__(self, num_layers, num_inputs, nodes_per_layer, num_outputs):
+    def __init__(self, num_layers, num_inputs, nodes_per_layer, num_outputs, dropout=False):
         super().__init__()
         layers = OrderedDict()
         # Add the input layer
         # layers['flatten'] = nn.Flatten()
         layers['input'] = nn.Linear(num_inputs, nodes_per_layer)
+        if dropout: layers['drop0'] = nn.Dropout(0.25)
         layers['relu0'] = nn.ReLU()
         # Add the hidden layers
         for i in range(num_layers):
             layers[f'lin{i+1}'] = nn.Linear(nodes_per_layer, nodes_per_layer)
+            if dropout: layers[f'drop{i+1}'] = nn.Dropout(p=0.25)
             layers[f'relu{i+1}'] = nn.ReLU()
         # Add the output layer
         layers['output'] = nn.Linear(nodes_per_layer, num_outputs)
+        if dropout: layers[f'dropout'] = nn.Dropout(p=0.25)
         layers['reluout'] = nn.ReLU()
         # Create the network
         self.linear_relu_stack = nn.Sequential(layers)
@@ -137,6 +140,7 @@ class ArrheniusNet(nn.Module):
         self._num_inputs = num_inputs
         self._nodes_per_layer = nodes_per_layer
         self._num_outputs = num_outputs
+        self._dropout = dropout
 
     def forward(self, x):
         return self.linear_relu_stack(x)
@@ -149,6 +153,7 @@ class ArrheniusNet(nn.Module):
                 + f'_out{self._num_outputs}'
                 + f'_nl{self._num_layers}'
                 + f'_npl{self._nodes_per_layer}'
+                + ('_dropout' if self._dropout else '')
                 )
 
 class TrainingManager:
@@ -319,12 +324,13 @@ class TrainingManager:
             plt.clf()
             plt.close('all')
 
-def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128):
+def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128, include_dropout=False):
     ann = ArrheniusNet(
             num_layers=num_layers,
             num_inputs=ads.num_inputs,
             nodes_per_layer=nodes_per_layer,
             num_outputs=ads.num_outputs,
+            dropout=include_dropout,
             )
     loss_fn = nn.MSELoss()
     optimizer = optim.Adam(ann.parameters(), lr=1e-3)
@@ -339,9 +345,9 @@ def initialize_data_objects(training_percent=0.8, batch_size=64, include_atom_co
     train_dataset, test_dataset = random_split(ads, [train_size, test_size])
     return ads, train_dataset, test_dataset
 
-def main(num_layers=5, nodes_per_layer=128, epochs=40, include_atom_counts=False, resume=False):
+def main(num_layers=5, nodes_per_layer=128, epochs=40, include_dropout=False, include_atom_counts=False, resume=True):
     ads, train_dataset, test_dataset = initialize_data_objects(include_atom_counts=include_atom_counts)
-    ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer)
+    ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout)
     tm = TrainingManager(ann, loss_fn, optimizer, train_dataset, test_dataset, load_project=resume)
     if not resume:
         tm.train_loop(epochs)
@@ -352,11 +358,12 @@ def run_multiple_models():
     for num_layers in [4, 5, 6]:
         for nodes_per_layer in [64, 128, 256]:
             for include_atom_counts in [True, False]:
-                last_train_loss = 1e6
-                last_test_loss = 1e6
-                tm = main(num_layers=num_layers, nodes_per_layer=nodes_per_layer, epochs=40, include_atom_counts=include_atom_counts, resume=False)
-                tm.plot_loss(show=False)
-                tm.get_evals(show=False)
+                for include_dropout in [True, False]:
+                    last_train_loss = 1e6
+                    last_test_loss = 1e6
+                    tm = main(num_layers=num_layers, nodes_per_layer=nodes_per_layer, epochs=20, include_dropout=include_dropout, include_atom_counts=include_atom_counts, resume=False)
+                    tm.plot_loss(show=False)
+                    tm.get_evals(show=False)
 
 if __name__ == "__main__":
     run_multiple_models()
