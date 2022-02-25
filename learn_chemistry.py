@@ -216,6 +216,15 @@ class TrainingManager:
             y[:, 2].detach().numpy(),
             pred[:, 2].detach().numpy(),
             1))
+        # Find the Pearson correlation coefficients per variable
+        pearson_coefficients = []
+        for var in range(y.shape[1]):
+            pearson_coefficients.append(np.corrcoef([
+                y[:, var].detach().numpy(),
+                pred[:, var].detach().numpy()])[0][1])
+        avg_pearson = np.mean(pearson_coefficients)
+        print(f'Pearson coefficients: {pearson_coefficients}')
+        print(f'Mean pearson coefficient: {avg_pearson}')
         # Plot everything
         plt.subplots(1, 3, sharey=True)
         _range = np.linspace(0, 1, 51)
@@ -224,6 +233,7 @@ class TrainingManager:
         plt.plot(_range, line1(_range), 'r-')
         plt.plot(_range, _range, 'k--')
         plt.title(line1)
+        plt.text(0.6, 0.05, f'PC = {pearson_coefficients[0]:.2f}', backgroundcolor='white', alpha=0.7)
         plt.xlabel('True value')
         plt.ylabel('Prediction')
         plt.xlim([0, 1])
@@ -233,6 +243,7 @@ class TrainingManager:
         plt.plot(_range, line2(_range), 'r-')
         plt.plot(_range, _range, 'k--')
         plt.title(line2)
+        plt.text(0.6, 0.05, f'PC = {pearson_coefficients[1]:.2f}', backgroundcolor='white', alpha=0.7)
         plt.xlabel('True value')
         plt.xlim([0, 1])
         plt.subplot(133)
@@ -240,6 +251,7 @@ class TrainingManager:
         plt.plot(_range, line3(_range), 'r-',)
         plt.plot(_range, _range, 'k--')
         plt.title(line3)
+        plt.text(0.6, 0.05, f'PC = {pearson_coefficients[2]:.2f}', backgroundcolor='white', alpha=0.7)
         plt.xlabel('True value')
         plt.xlim([0, 1])
         plt.suptitle(self.project_name + f' [{data}]')
