@@ -20,8 +20,14 @@ print(f'Using device {device}')
 SUMMARY_FILE='model_summary.csv'
 
 class ArrheniusDataset(Dataset):
-    def __init__(self, include_atom_counts=False):
+    def __init__(self, include_atom_counts=False, order_species=True):
         self._load_data('arrhenius.dataset')
+        # If order species is False, then the order of the species does not
+        # matter - duplicate the reactions with the species in various orders
+        # so that the network can learn that
+        if not order_species:
+            self._add_swapped_versions()
+        # extract the required variables
         features = ['reactant1', 'reactant2', 'product1', 'product2']
         if include_atom_counts:
             atom_count_headers_prefix = ['r1', 'r2', 'p1', 'p2']
@@ -88,6 +94,20 @@ class ArrheniusDataset(Dataset):
         else:
             # The pickle file doesn't exist - preprocess data and store it
             self._preprocess_data(filename, filename.replace('.dataset', '.csv'))
+
+    def _add_swapped_versions(self):
+        # Swap the reactants
+        df_swapped_reactants = self.df.copy()
+        df_swapped_reactants[['reactant1', 'reactant2']] = self.df[['reactant2', 'reactant1']]
+        # Swap the products
+        df_swapped_products = self.df.copy()
+        df_swapped_products[['product1', 'product2']] = self.df[['product2', 'product1']]
+        # Swap both reactants and products
+        df_swapped_both = self.df.copy()
+        df_swapped_both[['reactant1', 'reactant2', 'product1', 'product2']] = \
+                self.df[['reactant2', 'reactant1', 'product2', 'product1']]
+        # Append both
+        self.df = pd.concat([self.df, df_swapped_reactants, df_swapped_products, df_swapped_both])
 
     def _preprocess_data(self, pickle_filename, csv_filename):
         # Load the data
@@ -384,8 +404,8 @@ def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128, include_
     optimizer = optim.Adam(ann.parameters(), lr=1e-3)
     return ann, optimizer, loss_fn
 
-def initialize_data_objects(training_percent=0.8, batch_size=64, include_atom_counts=False):
-    ads = ArrheniusDataset(include_atom_counts)
+def initialize_data_objects(training_percent=0.8, batch_size=64, include_atom_counts=False, order_species=True):
+    ads = ArrheniusDataset(include_atom_counts, order_species=order_species)
     # Split into training and testing data
     torch.manual_seed(0)
     train_size = int(0.8 * len(ads))
@@ -393,8 +413,8 @@ def initialize_data_objects(training_percent=0.8, batch_size=64, include_atom_co
     train_dataset, test_dataset = random_split(ads, [train_size, test_size])
     return ads, train_dataset, test_dataset
 
-def main(num_layers=5, nodes_per_layer=128, epochs=40, include_dropout=False, include_atom_counts=False, resume=True):
-    ads, train_dataset, test_dataset = initialize_data_objects(include_atom_counts=include_atom_counts)
+def main(num_layers=5, nodes_per_layer=128, epochs=40, include_dropout=False, include_atom_counts=False, order_species=True, resume=True):
+    ads, train_dataset, test_dataset = initialize_data_objects(include_atom_counts=include_atom_counts, order_species=order_species)
     ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout)
     tm = TrainingManager(ann, loss_fn, optimizer, train_dataset, test_dataset, load_project=resume)
     if not resume:
@@ -409,7 +429,7 @@ def run_multiple_models():
                 for include_dropout in [True, False]:
                     last_train_loss = 1e6
                     last_test_loss = 1e6
-                    tm = main(num_layers=num_layers, nodes_per_layer=nodes_per_layer, epochs=20, include_dropout=include_dropout, include_atom_counts=include_atom_counts, resume=False)
+                    tm = main(num_layers=num_layers, nodes_per_layer=nodes_per_layer, epochs=20, include_dropout=include_dropout, include_atom_counts=include_atom_counts, order_species=False, resume=False)
                     tm.plot_loss(show=False)
                     tm.get_evals(data='test', show=False, save_vals=True)
                     tm.get_evals(data='train', show=False, save_vals=True)
