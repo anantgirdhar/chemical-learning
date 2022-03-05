@@ -190,9 +190,17 @@ class TrainingManager:
         self.training_dataloader = DataLoader(training_dataset, batch_size=batch_size)
         self.testing_dataloader = DataLoader(testing_dataset, batch_size=batch_size)
         self.epoch = 0
-        self.training_loss = []
-        self.testing_loss = []
+        self.metrics = {
+                'train_loss': [],
+                'test_loss': [],
+                'train_PC': [],
+                'test_PC': [],
+                'train_BFL': [],
+                'test_BFL': [],
+                }
         self.project_name = model.project_name
+        self._predictions_test = None
+        self._predictions_train = None
         if load_project:
             self.load(model.project_name)
 
@@ -211,138 +219,93 @@ class TrainingManager:
             self.optimizer.step()
             running_loss += loss.item()
         # Compute the loss per record to compare it with the testing loss
-        self.training_loss.append(running_loss / size)
+        self.metrics['train_loss'].append(running_loss / size)
         self.epoch += 1
+        # Reset the predictions
+        self._predictions_test = None
+        self._predictions_train = None
 
-    def get_evals(self, data='test', show=True, save_vals=False):
-        self.model.eval()
-        if data == 'test':
-            X = self.testing_dataset.dataset.x.float()
-            y = self.testing_dataset.dataset.y.float()
-        elif data == 'train':
-            X = self.training_dataset.dataset.x.float()
-            y = self.training_dataset.dataset.y.float()
-        else:
-            raise ValueError(f'Invalid choice for dataset: {data}')
-        pred = self.model(X)
-        # Find the best fit lines
-        line1 = np.poly1d(np.polyfit(
-            y[:, 0].detach().numpy(),
-            pred[:, 0].detach().numpy(),
-            1))
-        line2 = np.poly1d(np.polyfit(
-            y[:, 1].detach().numpy(),
-            pred[:, 1].detach().numpy(),
-            1))
-        line3 = np.poly1d(np.polyfit(
-            y[:, 2].detach().numpy(),
-            pred[:, 2].detach().numpy(),
-            1))
-        # Find the Pearson correlation coefficients per variable
-        pearson_coefficients = []
-        for var in range(y.shape[1]):
-            pearson_coefficients.append(np.corrcoef([
-                y[:, var].detach().numpy(),
-                pred[:, var].detach().numpy()])[0][1])
-        avg_pearson = np.mean(pearson_coefficients)
-        print(f'Pearson coefficients: {pearson_coefficients}')
-        print(f'Mean pearson coefficient: {avg_pearson}')
-        # Plot everything
-        plt.subplots(1, 3, sharey=True)
-        _range = np.linspace(0, 1, 51)
-        plt.subplot(131)
-        plt.plot(y[:, 0].detach().numpy(), pred[:, 0].detach().numpy(), 'bx')
-        plt.plot(_range, line1(_range), 'r-')
-        plt.plot(_range, _range, 'k--')
-        plt.title(line1)
-        plt.text(0.6, 0.05, f'PC = {pearson_coefficients[0]:.2f}', backgroundcolor='white', alpha=0.7)
-        plt.xlabel('True value')
-        plt.ylabel('Prediction')
-        plt.xlim([0, 1])
-        plt.ylim([0, 1])
-        plt.subplot(132)
-        plt.plot(y[:, 1].detach().numpy(), pred[:, 1].detach().numpy(), 'bx')
-        plt.plot(_range, line2(_range), 'r-')
-        plt.plot(_range, _range, 'k--')
-        plt.title(line2)
-        plt.text(0.6, 0.05, f'PC = {pearson_coefficients[1]:.2f}', backgroundcolor='white', alpha=0.7)
-        plt.xlabel('True value')
-        plt.xlim([0, 1])
-        plt.subplot(133)
-        plt.plot(y[:, 2].detach().numpy(), pred[:, 2].detach().numpy(), 'bx')
-        plt.plot(_range, line3(_range), 'r-',)
-        plt.plot(_range, _range, 'k--')
-        plt.title(line3)
-        plt.text(0.6, 0.05, f'PC = {pearson_coefficients[2]:.2f}', backgroundcolor='white', alpha=0.7)
-        plt.xlabel('True value')
-        plt.xlim([0, 1])
-        plt.suptitle(self.project_name + f' [{data}]')
-        plt.tight_layout()
-        if save_vals or not show:
-            plt.savefig(self.project_name + f'_pred_{data}.png')
-        if show:
-            plt.show()
-        else:
-            plt.cla()
-            plt.clf()
-            plt.close('all')
-        if save_vals:
-            if not os.path.isfile(SUMMARY_FILE):
-                with open(SUMMARY_FILE, 'w') as f:
-                    f.write(','.join([
-                        'net',
-                        'inputs', 'outputs',
-                        'nl', 'npl',
-                        'dropout',
-                        'data',
-                        'epoch',
-                        'training_loss', 'testing_loss',
-                        'PC1', 'PC2', 'PC3',
-                        'Avg_PC',
-                        'm1', 'b1', 'm2', 'b2', 'm3', 'b3',
-                        ]))
-                    f.write('\n')
-            row = [
-                    type(self.model).__name__,
-                    self.model._num_inputs, self.model._num_outputs,
-                    self.model._num_layers, self.model._nodes_per_layer,
-                    self.model._dropout,
-                    data,
-                    self.epoch,
-                    self.training_loss[-1], self.testing_loss[-1],
-                    ]
-            row.extend(pearson_coefficients)
-            row.append(avg_pearson)
-            row.extend(list(line1.coefficients))
-            row.extend(list(line2.coefficients))
-            row.extend(list(line3.coefficients))
-            with open(SUMMARY_FILE, 'a') as f:
-                f.write(','.join([str(i) for i in row]))
-                f.write('\n')
-
-    def _test(self, print_comparison=False):
+    @torch.no_grad()
+    def _test(self):
         size = len(self.testing_dataloader.dataset)
         num_batches = len(self.testing_dataloader)
-        self.model.eval()
         running_loss = 0.
-        with torch.no_grad():
-            for X, y in self.testing_dataloader:
-                X, y = X.to(device).float(), y.to(device).float()
-                pred = self.model(X)
-                if print_comparison:
-                    print('Comparison (true vs estimated):')
-                    for true, estimate in zip(y, pred):
-                        print(f'  {true} - {estimate} (diff = {true - estimate})')
-                running_loss += self.loss_fn(pred, y).item()
+        self.model.eval()
+        for X, y in self.testing_dataloader:
+            X, y = X.to(device).float(), y.to(device).float()
+            pred = self.model(X)
+            running_loss += self.loss_fn(pred, y).item()
         # Compute the loss per record to compare it with the training loss
-        self.testing_loss.append(running_loss / size)
+        self.metrics['test_loss'].append(running_loss / size)
+
+    @torch.no_grad()
+    def _update_test_train_predictions(self):
+        self.model.eval()
+        # Update the test predictions
+        X = self.testing_dataset.dataset.x.float()
+        self._predictions_test = self.model(X)
+        # Update the training predictions
+        X = self.training_dataset.dataset.x.float()
+        self._predictions_train = self.model(X)
+
+    def _compute_PC(self):
+        if self._predictions_test is None or self._predictions_train is None:
+            self._update_test_train_predictions()
+        # Compute Pearson Coefficients for the testing data
+        y_test = self.testing_dataset.dataset.y.float()
+        pearson_coefficients = []
+        for var in range(y_test.shape[1]):
+            pearson_coefficients.append(np.corrcoef([
+                y_test[:, var].detach().numpy(),
+                self._predictions_test[:, var].detach().numpy()])[0][1])
+        self.metrics['test_PC'].append(tuple(pearson_coefficients))
+        # Compute Pearson Coefficients for the training data
+        y_train = self.training_dataset.dataset.y.float()
+        pearson_coefficients = []
+        for var in range(y_train.shape[1]):
+            pearson_coefficients.append(np.corrcoef([
+                y_train[:, var].detach().numpy(),
+                self._predictions_train[:, var].detach().numpy()])[0][1])
+        self.metrics['train_PC'].append(tuple(pearson_coefficients))
+
+    def _compute_best_fit_lines(self):
+        if self._predictions_test is None or self._predictions_train is None:
+            self._update_test_train_predictions()
+        # Compute the best fit lines for the testing data
+        y_test = self.testing_dataset.dataset.y.float().detach().numpy()
+        self.metrics['test_BFL'].append([])
+        for var in range(y_test.shape[1]):
+            self.metrics['test_BFL'][-1].append(
+                    np.poly1d(np.polyfit(
+                        y_test[:, var],
+                        self._predictions_test[:, var].detach().numpy(),
+                        1
+                        )))
+        # Compute the best fit lines for the training data
+        y_train = self.training_dataset.dataset.y.float().detach().numpy()
+        self.metrics['train_BFL'].append([])
+        for var in range(y_train.shape[1]):
+            self.metrics['train_BFL'][-1].append(
+                    np.poly1d(np.polyfit(
+                        y_train[:, var],
+                        self._predictions_train[:, var].detach().numpy(),
+                        1
+                        )))
+
+    def _compute_metrics(self):
+        self._compute_PC()
+        self._compute_best_fit_lines()
 
     def train_loop(self, epochs):
         print(f'\nTraining model {self.project_name}')
         for i in range(epochs):
             self._train_one_epoch()
             self._test()
-            print(f'Epoch {self.epoch:03d} - Training {self.training_loss[-1]:.3e} | Testing {self.testing_loss[-1]:.3e}')
+            self._compute_metrics()
+            print(f'Epoch {self.epoch:03d} '
+                  f'- Training {self.metrics["train_loss"][-1]:.3e} '
+                  f'| Testing {self.metrics["test_loss"][-1]:.3e}'
+                  )
 
     def save(self):
         torch.save({
@@ -350,8 +313,7 @@ class TrainingManager:
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'loss_fn': self.loss_fn,
-            'training_loss': self.training_loss,
-            'testing_loss': self.testing_loss,
+            'metrics': self.metrics,
             }, self.project_name + '.pth')
 
     def load(self, project_name):
@@ -366,25 +328,91 @@ class TrainingManager:
             print('Trained model loss function loaded.')
             self.epoch = checkpoint['epochs']
             print(f'Model has been trained for {self.epoch} epochs')
-            self.training_loss = checkpoint['training_loss']
-            self.testing_loss = checkpoint['testing_loss']
-            print(f'Last loss: training {self.training_loss[-1]:.3e} | Testing {self.testing_loss[-1]:.3e}')
+            self.metrics = checkpoint['metrics']
+            print(f'Last loss: '
+                  f'training {self.metrics["train_loss"][-1]:.3e} | '
+                  f'Testing {self.metrics["test_loss"][-1]:.3e}'
+                  )
         else:
             print(f'Tried to load but file {self.project_name}.pth not found.')
 
-    def plot_loss(self, log_scale=True, show=True):
-        plt.figure()
+    def plot_scatters(self, show=True):
+        if self._predictions_test is None or self._predictions_train is None:
+            self._update_test_train_predictions()
+        # Create aliases to the data for readability
+        y_test = self.testing_dataset.dataset.y.float().detach().numpy()
+        pred_test = self._predictions_test.detach().numpy()
+        y_train = self.training_dataset.dataset.y.float().detach().numpy()
+        pred_train = self._predictions_train
+        num_vars = y_test.shape[1]
+        # Create aliases to the metrics
+        PC_test = self.metrics['test_PC'][-1]
+        PC_train = self.metrics['train_PC'][-1]
+        BFL_test = self.metrics['test_BFL'][-1]
+        BFL_train = self.metrics['train_BFL'][-1]
+        # Create two rows of plots
+        # The top row will have the test scatter data
+        # The bottom row will have the training scatter data
+        plt.subplots(2, num_vars, sharey=True, sharex=True)
+        _range = np.linspace(0, 1, 51)
+        for var in range(num_vars):
+            plt.subplot(231 + var)
+            plt.plot(y_test[:, var], pred_test[:, var], 'bx')
+            line = np.poly1d(BFL_test[var])
+            plt.plot(_range, line(_range), 'r-')
+            plt.plot(_range, _range, 'k--')
+            plt.title(f'Test [{var=}]: {line}')
+            plt.text(0.6, 0.05, f'PC = {PC_test[var]:.2f}', backgroundcolor='white', alpha=0.7)
+            plt.subplot(231 + num_vars + var)
+            plt.plot(y_train[:, var], pred_train[:, var], 'bx')
+            line = np.poly1d(BFL_train[var])
+            plt.plot(_range, line(_range), 'r-')
+            plt.plot(_range, _range, 'k--')
+            plt.title(f'Train [{var=}]: {line}')
+            plt.text(0.6, 0.05, f'PC = {PC_train[var]:.2f}', backgroundcolor='white', alpha=0.7)
+        plt.suptitle(self.project_name)
+        plt.tight_layout()
+        if show:
+            plt.show()
+
+    def plot_temporal_metrics(self, log_scale=True, show=True):
+        plt.subplots(2, 1, sharex=True, figsize=(14, 10))
+        _range = range(1, self.epoch+1)
+        train_markers = ['bo', 'cs', 'kd']
+        test_markers = ['rx', 'mv', 'y^']
+        # Plot the loss
+        plt.subplot(211)
         if log_scale:
-            plt.semilogy(range(1, self.epoch+1), self.training_loss,'bo-', label='train loss')
-            plt.semilogy(range(1, self.epoch+1), self.testing_loss,'rx-', label='test loss')
+            plt.semilogy(_range, self.metrics['train_loss'],'bo-', label='train loss')
+            plt.semilogy(_range, self.metrics['test_loss'],'rx--', label='test loss')
         else:
-            plt.plot(range(1, self.epoch+1), self.training_loss,'bo-', label='train loss')
-            plt.plot(range(1, self.epoch+1), self.testing_loss,'rx-', label='test loss')
+            plt.plot(_range, self.metrics['train_loss'],'bo-', label='train loss')
+            plt.plot(_range, self.metrics['test_loss'],'rx--', label='test loss')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.legend(loc='best')
-        plt.title(self.project_name)
-        plt.savefig(self.project_name + '_loss.png')
+        # Plot the pearson correlation coefficients
+        plt.subplot(223)
+        PC_train = list(zip(*self.metrics['train_PC']))
+        PC_test = list(zip(*self.metrics['test_PC']))
+        for i in range(len(PC_train)):
+            plt.plot(_range, PC_train[i], train_markers[i]+'-', label=f'PC {i} train')
+            plt.plot(_range, PC_test[i], test_markers[i]+'--', label=f'PC {i} test')
+        plt.xlabel('Epoch')
+        plt.ylabel('PC')
+        plt.legend(loc='best')
+        # Plot the best fit line slopes
+        plt.subplot(224)
+        BFL_train = list(zip(*self.metrics['train_BFL']))
+        BFL_test = list(zip(*self.metrics['test_BFL']))
+        for i in range(len(BFL_train)):
+            plt.plot(_range, [x[1] for x in BFL_train[i]], train_markers[i]+'-', label=f'BFL {i} train')
+            plt.plot(_range, [x[1] for x in BFL_test[i]], test_markers[i]+'--', label=f'BFL {i} test')
+        plt.xlabel('Epoch')
+        plt.ylabel('BFL slopes')
+        plt.legend(loc='best')
+        plt.suptitle(self.project_name)
+        plt.savefig(self.project_name + '_metrics.png')
         if show:
             plt.show()
         else:
@@ -423,16 +451,15 @@ def main(num_layers=5, nodes_per_layer=128, epochs=40, include_dropout=False, in
     return tm
 
 def run_multiple_models():
-    for num_layers in [4, 5, 6]:
-        for nodes_per_layer in [64, 128, 256, 512]:
+    for num_layers in [2, 3, 4, 5, 6]:
+        for nodes_per_layer in [32, 64, 128, 256, 512]:
             for include_atom_counts in [True, False]:
                 for include_dropout in [True, False]:
                     last_train_loss = 1e6
                     last_test_loss = 1e6
                     tm = main(num_layers=num_layers, nodes_per_layer=nodes_per_layer, epochs=20, include_dropout=include_dropout, include_atom_counts=include_atom_counts, order_species=False, resume=False)
-                    tm.plot_loss(show=False)
-                    tm.get_evals(data='test', show=False, save_vals=True)
-                    tm.get_evals(data='train', show=False, save_vals=True)
+                    tm.plot_scatters(show=False)
+                    tm.plot_temporal_metrics(show=False)
 
 if __name__ == "__main__":
     run_multiple_models()
