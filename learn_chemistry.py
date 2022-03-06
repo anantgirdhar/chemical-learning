@@ -2,6 +2,7 @@ from collections import OrderedDict
 import sys
 import os
 
+import itertools as it
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -39,6 +40,8 @@ class ArrheniusDataset(Dataset):
         self._x = torch.tensor(x)
         self._y = torch.tensor(y)
         self.standardize()
+        self._ordered_species = order_species
+        self._include_atom_counts = include_atom_counts
 
     @property
     def num_inputs(self):
@@ -138,45 +141,95 @@ class ArrheniusNet(nn.Module):
     products. The reactants and products are provided as one-hot encoded
     vectors.
     """
-    def __init__(self, num_layers, num_inputs, nodes_per_layer, num_outputs, dropout=False):
+    def __init__(self, num_inputs, num_outputs, num_layers=None, nodes_per_layer=None, dropout=False, layer_sizes=None):
         super().__init__()
-        layers = OrderedDict()
-        # Add the input layer
-        # layers['flatten'] = nn.Flatten()
-        layers['input'] = nn.Linear(num_inputs, nodes_per_layer)
-        if dropout: layers['drop0'] = nn.Dropout(0.25)
-        layers['relu0'] = nn.ReLU()
-        # Add the hidden layers
-        for i in range(num_layers):
-            layers[f'lin{i+1}'] = nn.Linear(nodes_per_layer, nodes_per_layer)
-            if dropout: layers[f'drop{i+1}'] = nn.Dropout(p=0.25)
-            layers[f'relu{i+1}'] = nn.ReLU()
-        # Add the output layer
-        layers['output'] = nn.Linear(nodes_per_layer, num_outputs)
-        if dropout: layers[f'dropout'] = nn.Dropout(p=0.25)
-        layers['reluout'] = nn.ReLU()
-        # Create the network
-        self.linear_relu_stack = nn.Sequential(layers)
+        if layer_sizes is None:
+            # Create a list of layer sizes from the other inputs
+            layer_sizes = [nodes_per_layer, ] * num_layers
+            self._uniform_layers = True
+        else:
+            # Make sure that the given layer sizes are not all the same (in
+            # which case, just revert to the uniform route)
+            if len(set(layer_sizes)) == 1:
+                # It's just uniform
+                self._uniform_layers = True
+                num_layers = len(layer_sizes)
+                nodes_per_layer = layer_sizes[0]
+            else:
+                self._uniform_layers = False
+        # Create the network now
+        self._init_network(num_inputs, num_outputs, layer_sizes, dropout)
         # Store the model parameters to help create a project name later
         self._num_layers = num_layers
         self._num_inputs = num_inputs
         self._nodes_per_layer = nodes_per_layer
         self._num_outputs = num_outputs
         self._dropout = dropout
+        self._layer_sizes = layer_sizes
+
+    def _init_network(self, num_inputs, num_outputs, layer_sizes, dropout):
+        layers = OrderedDict()
+        # Add the input layer
+        # layers['flatten'] = nn.Flatten()
+        layers['input'] = nn.Linear(num_inputs, layer_sizes[0])
+        if dropout: layers['drop0'] = nn.Dropout(0.25)
+        layers['relu0'] = nn.ReLU()
+        # Add the hidden layers
+        for i in range(len(layer_sizes)-1):
+            layers[f'lin{i+1}'] = nn.Linear(layer_sizes[i], layer_sizes[i+1])
+            if dropout: layers[f'drop{i+1}'] = nn.Dropout(p=0.25)
+            layers[f'relu{i+1}'] = nn.ReLU()
+        # Add the output layer
+        layers['output'] = nn.Linear(layer_sizes[-1], num_outputs)
+        if dropout: layers[f'dropout'] = nn.Dropout(p=0.25)
+        layers['reluout'] = nn.ReLU()
+        # Create the network
+        self.linear_relu_stack = nn.Sequential(layers)
 
     def forward(self, x):
         return self.linear_relu_stack(x)
 
     @property
     def project_name(self):
-        return (
-                f'ArrheniusNet'
-                + f'_in{self._num_inputs}'
-                + f'_out{self._num_outputs}'
-                + f'_nl{self._num_layers}'
-                + f'_npl{self._nodes_per_layer}'
-                + ('_dropout' if self._dropout else '')
-                )
+        if self._uniform_layers:
+            return (
+                    f'ArrheniusNet'
+                    + f'_in{self._num_inputs}'
+                    + f'_out{self._num_outputs}'
+                    + f'_nl{self._num_layers}'
+                    + f'_npl{self._nodes_per_layer}'
+                    + ('_dropout' if self._dropout else '')
+                    )
+        else:
+            return (
+                    f'ArrheniusNet'
+                    + f'_in{self._num_inputs}'
+                    + f'_out{self._num_outputs}'
+                    + '_layers'
+                    + '-'.join([str(s) for s in self._layer_sizes])
+                    + ('_dropout' if self._dropout else '')
+                    )
+
+    def __repr__(self):
+        if self._uniform_layers:
+            return (
+                    f'ArrheniusNet('
+                    + f'num_inputs={self._num_inputs}'
+                    + f', num_outputs={self._num_outputs}'
+                    + f', num_layers={self._num_layers}'
+                    + f', nodes_per_layer={self._nodes_per_layer}'
+                    + (', dropout=True' if self._dropout else '')
+                    + ')'
+                    )
+        else:
+            return (
+                    f'ArrheniusNet('
+                    + f'num_inputs={self._num_inputs}'
+                    + f', num_outputs={self._num_outputs}'
+                    + (', dropout=True, ' if self._dropout else '')
+                    + f', layer_sizes={self._layer_sizes}'
+                    + ')'
+                    )
 
 class TrainingManager:
 
@@ -199,6 +252,10 @@ class TrainingManager:
                 'test_BFL': [],
                 }
         self.project_name = model.project_name
+        if not self.training_dataset.dataset._ordered_species:
+            self.project_name += '_unorderedsp'
+        if self.training_dataset.dataset._include_atom_counts:
+            self.project_name += '_withcounts'
         self._predictions_test = None
         self._predictions_train = None
         if load_project:
@@ -420,13 +477,14 @@ class TrainingManager:
             plt.clf()
             plt.close('all')
 
-def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128, include_dropout=False):
+def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128, include_dropout=False, layer_sizes=None):
     ann = ArrheniusNet(
-            num_layers=num_layers,
             num_inputs=ads.num_inputs,
-            nodes_per_layer=nodes_per_layer,
             num_outputs=ads.num_outputs,
+            num_layers=num_layers,
+            nodes_per_layer=nodes_per_layer,
             dropout=include_dropout,
+            layer_sizes=layer_sizes,
             )
     loss_fn = nn.MSELoss()
     optimizer = optim.Adam(ann.parameters(), lr=1e-3)
@@ -441,25 +499,83 @@ def initialize_data_objects(training_percent=0.8, batch_size=64, include_atom_co
     train_dataset, test_dataset = random_split(ads, [train_size, test_size])
     return ads, train_dataset, test_dataset
 
-def main(num_layers=5, nodes_per_layer=128, epochs=40, include_dropout=False, include_atom_counts=False, order_species=True, resume=True):
+def main(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, resume=True):
     ads, train_dataset, test_dataset = initialize_data_objects(include_atom_counts=include_atom_counts, order_species=order_species)
-    ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout)
+    ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout, layer_sizes=layer_sizes)
     tm = TrainingManager(ann, loss_fn, optimizer, train_dataset, test_dataset, load_project=resume)
     if not resume:
         tm.train_loop(epochs)
         tm.save()
     return tm
 
-def run_multiple_models():
-    for num_layers in [2, 3, 4, 5, 6]:
-        for nodes_per_layer in [32, 64, 128, 256, 512]:
-            for include_atom_counts in [True, False]:
-                for include_dropout in [True, False]:
-                    last_train_loss = 1e6
-                    last_test_loss = 1e6
-                    tm = main(num_layers=num_layers, nodes_per_layer=nodes_per_layer, epochs=20, include_dropout=include_dropout, include_atom_counts=include_atom_counts, order_species=False, resume=False)
-                    tm.plot_scatters(show=False)
-                    tm.plot_temporal_metrics(show=False)
+def run_uniform_models():
+    num_layers = [2, 3, 4, 5, 6]
+    nodes_per_layer = [16, 32, 64, 128, 256, 512]
+    include_atom_counts = [True, False]
+    include_dropout = [True, False]
+    order_species = [True, False]
+    for nl, npl, ic, dropout, order in it.product(
+            num_layers, nodes_per_layer, include_atom_counts, include_dropout, order_species,
+            ):
+        last_train_loss = 1e6
+        last_test_loss = 1e6
+        tm = main(
+                num_layers=nl, nodes_per_layer=npl,
+                epochs=20,
+                include_dropout=dropout,
+                include_atom_counts=ic,
+                order_species=order,
+                resume=False,
+                )
+        tm.plot_scatters(show=False)
+        tm.plot_temporal_metrics(show=False)
+
+def run_nonuniform_models():
+    architectures = [
+            (16, 4, 8),
+            (32, 8, 16),
+            (64, 16, 32),
+            (64, 32, 64),
+            (128, 32, 64),
+            (128, 64, 64),
+            (256, 64, 128),
+            (512, 128, 256),
+            (32, 8, 16, 4),
+            (64, 16, 32, 8),
+            (64, 32, 64, 32),
+            (128, 32, 64, 16),
+            (128, 64, 64, 32),
+            (256, 64, 128, 32),
+            (512, 128, 256, 64),
+            # (1000, 125, 500),
+            # (1000, 125, 500, 50),
+            # (2000, 500, 1000),
+            (2000, 500, 1000, 100),
+            ]
+    # Sort the architectures in order of number of parameters
+    def _arch_size(a):
+        a = np.array(a)
+        return sum(a[1:] * a[:-1]) + a[0] * 2000 + a[-1] * 3
+    architectures = sorted(architectures, key=lambda a: _arch_size(a))
+    include_atom_counts = [True, False]
+    include_dropout = [True, False]
+    order_species = [True, False]
+    for arch, ic, dropout, order in it.product(
+            architectures, include_atom_counts, include_dropout, order_species,
+            ):
+        last_train_loss = 1e6
+        last_test_loss = 1e6
+        tm = main(
+                epochs=20,
+                include_dropout=dropout,
+                layer_sizes=arch,
+                include_atom_counts=include_atom_counts,
+                order_species=order,
+                resume=False,
+                )
+        tm.plot_scatters(show=False)
+        tm.plot_temporal_metrics(show=False)
 
 if __name__ == "__main__":
-    run_multiple_models()
+    run_uniform_models()
+    run_nonuniform_models()
