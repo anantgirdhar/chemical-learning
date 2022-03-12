@@ -649,9 +649,13 @@ def run_nonuniform_models(crossvalidation=False):
             tm.plot_temporal_metrics(show=False)
 
 if __name__ == "__main__":
-    crossvalidation=False
-    if len(sys.argv) > 1:
-        if sys.argv[1] == 'cv':
-            crossvalidation = True
+    if len(sys.argv) != 2:
+        raise ValueError('Usage: python learn_chemistry.py (train|cv)')
+    if sys.argv[1] == 'cv':
+        crossvalidation = True
+    elif sys.argv[1] == 'train':
+        crossvalidation = False
+    else:
+        raise ValueError(f'Unknown option {sys.argv[1]} provided')
     run_uniform_models(crossvalidation=crossvalidation)
     run_nonuniform_models(crossvalidation=crossvalidation)
