@@ -1,4 +1,7 @@
 from collections import OrderedDict
+import concurrent.futures
+import copy
+import multiprocessing as mp
 import sys
 import os
 
@@ -480,17 +483,18 @@ class TrainingManager:
 
 class CrossValidation:
 
-    def __init__(self, ann_objects_fn, dataset, nfolds=10, batch_size=64, epochs=20):
-        self.ann_objects_fn = ann_objects_fn
+    def __init__(self, model, optimizer, loss_fn, dataset, nfolds=10, batch_size=64, epochs=20):
+        self.model = model
+        self.optimizer = optimizer
+        self.loss_fn = loss_fn
         self.dataset = dataset
         self.nfolds = nfolds
         self.batch_size = batch_size
         self.epochs = epochs
         self.folds = KFold(n_splits=nfolds, shuffle=True, random_state=42)
-        self.folds = self.folds.split(range(len(dataset)))
+        self.folds = list(self.folds.split(range(len(dataset))))
         self.metrics = {f'fold{foldnum+1:02d}': None for foldnum in range(nfolds)}
         # To get the project name, create a throwaway model
-        model, _, _ = self.ann_objects_fn()
         self.project_name = model.project_name
         if not dataset._ordered_species:
             self.project_name += '_unorderedsp'
@@ -498,19 +502,53 @@ class CrossValidation:
             self.project_name += '_withcounts'
         self.project_name += '_folds'
 
+    def _run(self, fold, trainidx, testidx):
+        model = copy.deepcopy(self.model)
+        optimizer = copy.deepcopy(self.optimizer)
+        loss_fn = copy.deepcopy(self.loss_fn)
+        print('copied objects')
+        tm = TrainingManager(
+                model=model,
+                loss_fn=loss_fn,
+                optimizer=optimizer,
+                training_dataset=Subset(self.dataset, trainidx),
+                testing_dataset=Subset(self.dataset, testidx),
+                load_project=False,
+                batch_size=self.batch_size)
+        tm.train_loop(self.epochs)
+        return fold, tm.metrics
+
     def run(self):
         for fold, (trainidx, testidx) in enumerate(self.folds):
-            model, optimizer, loss_fn = self.ann_objects_fn()
-            tm = TrainingManager(
-                    model=model,
-                    loss_fn=loss_fn,
-                    optimizer=optimizer,
-                    training_dataset=Subset(self.dataset, trainidx),
-                    testing_dataset=Subset(self.dataset, testidx),
-                    load_project=False,
-                    batch_size=self.batch_size)
-            tm.train_loop(self.epochs)
-            self.metrics[f'fold{fold+1:02d}'] = tm.metrics
+            _, self.metrics[f'fold{fold+1:02d}'] = self._run(fold, trainidx, testidx)
+
+    def __run_parallel_doesntwork(self):
+        # append_results = lambda metrics: self.metrics[f'fold{fold+1:02d}'] = metrics
+        pool = mp.Pool(mp.cpu_count())
+        for fold, (trainidx, testidx) in enumerate(self.folds):
+            pool.apply_async(self._run, args=(fold, trainidx, testidx))
+        pool.close()
+        pool.join()
+
+    def __run_parallel_2_doesntwork(self):
+        plist = [
+                mp.Process(target=self._run, args=(fold, trainidx, testidx))
+                for fold, (trainidx, testidx) in enumerate(self.folds)
+                ]
+        for p in plist: p.start()
+        for p in plist: p.join()
+
+    def run_parallel(self):
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            results = []
+            for fold, (trainidx, testidx) in enumerate(self.folds):
+                # model, optimizer, loss_fn = self.ann_objects_fn()
+                print('running ', fold)
+                results.append(executor.submit(self._run, fold, trainidx, testidx))
+            for f in concurrent.futures.as_completed(results):
+                fold, metrics = f.result()
+                print('retrieving ', fold)
+                self.metrics[f'fold{fold+1:02d}'] = metrics
 
     def save_metrics(self):
         with open(self.project_name + '.p', 'wb') as f:
@@ -550,20 +588,25 @@ def main_train(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout
         tm.save()
     return tm
 
-def main_crossvalidate(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, nfolds=10, batch_size=64):
+def main_crossvalidate(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, nfolds=10, batch_size=64, parallel=True):
     ads, _, _ = initialize_data_objects(include_atom_counts=include_atom_counts, order_species=order_species)
-    ann_objects_fn = lambda: initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout, layer_sizes=layer_sizes)
+    ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout, layer_sizes=layer_sizes)
     cv = CrossValidation(
-            ann_objects_fn,
+            model=ann,
+            optimizer=optimizer,
+            loss_fn=loss_fn,
             dataset=ads,
             nfolds=nfolds,
             batch_size=batch_size,
             epochs=epochs)
-    cv.run()
+    if parallel:
+        cv.run_parallel()
+    else:
+        cv.run()
     cv.save_metrics()
     return cv
 
-def run_uniform_models(crossvalidation=False):
+def run_uniform_models(crossvalidation=False, parallel=True):
     num_layers = [2, 3, 4, 5, 6]
     nodes_per_layer = [16, 32, 64, 128, 256, 512]
     include_atom_counts = [True, False]
@@ -581,6 +624,7 @@ def run_uniform_models(crossvalidation=False):
                     include_dropout=dropout,
                     include_atom_counts=ic,
                     order_species=order,
+                    parallel=parallel,
                     )
         else:
             tm = main_train(
@@ -594,7 +638,7 @@ def run_uniform_models(crossvalidation=False):
             tm.plot_scatters(show=False)
             tm.plot_temporal_metrics(show=False)
 
-def run_nonuniform_models(crossvalidation=False):
+def run_nonuniform_models(crossvalidation=False, parallel=True):
     architectures = [
             (16, 4, 8),
             (32, 8, 16),
@@ -636,6 +680,7 @@ def run_nonuniform_models(crossvalidation=False):
                     layer_sizes=arch,
                     include_atom_counts=ic,
                     order_species=order,
+                    parallel=parallel,
                     )
         else:
             tm = main_train(
@@ -649,9 +694,21 @@ def run_nonuniform_models(crossvalidation=False):
             tm.plot_temporal_metrics(show=False)
 
 if __name__ == "__main__":
-    crossvalidation=False
     if len(sys.argv) > 1:
         if sys.argv[1] == 'cv':
             crossvalidation = True
-    run_uniform_models(crossvalidation=crossvalidation)
-    run_nonuniform_models(crossvalidation=crossvalidation)
+        elif sys.argv[1] == 'train':
+            crossvalidation = False
+        else:
+            raise ValueError(f'Unknown argument {sys.argv[1]}. Allowed: train, cv')
+    if len(sys.argv) > 2:
+        if sys.argv[2] == 'parallel':
+            parallel = True
+        elif sys.argv[2] == 'serial':
+            parallel = False
+        else:
+            raise ValueError(f'Unknown argument {sys.argv[2]}. Allowed: parallel, serial')
+    else:
+        parallel = 'serial'
+    run_uniform_models(crossvalidation=crossvalidation, parallel=parallel)
+    run_nonuniform_models(crossvalidation=crossvalidation, parallel=parallel)
