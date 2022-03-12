@@ -550,7 +550,7 @@ def main_train(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout
         tm.save()
     return tm
 
-def main_crossvalidate(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, nfolds=10, batch_size=64):
+def main_crossvalidate(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, nfolds=10, batch_size=64, force_computations=False):
     ads, _, _ = initialize_data_objects(include_atom_counts=include_atom_counts, order_species=order_species)
     ann_objects_fn = lambda: initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout, layer_sizes=layer_sizes)
     cv = CrossValidation(
@@ -558,7 +558,12 @@ def main_crossvalidate(num_layers=None, nodes_per_layer=None, epochs=40, include
             dataset=ads,
             nfolds=nfolds,
             batch_size=batch_size,
-            epochs=epochs)
+            epochs=epochs,
+            )
+    # Don't do anything if this is already done and we're not forcing it
+    if not force_computations and os.path.exists(cv.project_name + '.p'):
+        print(f'Found {cv.project_name} - skipping')
+        return None
     cv.run()
     cv.save_metrics()
     return cv
