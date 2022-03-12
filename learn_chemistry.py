@@ -7,13 +7,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pickle
+from sklearn.model_selection import KFold
 from tqdm import tqdm
 
 import torch
 from torch import nn
 from torch.functional import F
 from torch import optim
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, Subset, random_split
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'Using device {device}')
@@ -477,6 +478,47 @@ class TrainingManager:
             plt.clf()
             plt.close('all')
 
+class CrossValidation:
+
+    def __init__(self, ann_objects_fn, dataset, nfolds=10, batch_size=64, epochs=20):
+        self.ann_objects_fn = ann_objects_fn
+        self.dataset = dataset
+        self.nfolds = nfolds
+        self.batch_size = batch_size
+        self.epochs = epochs
+        self.folds = KFold(n_splits=nfolds, shuffle=True, random_state=42)
+        self.folds = self.folds.split(range(len(dataset)))
+        self.metrics = {f'fold{foldnum+1:02d}': None for foldnum in range(nfolds)}
+        # To get the project name, create a throwaway model
+        model, _, _ = self.ann_objects_fn()
+        self.project_name = model.project_name
+        if not dataset._ordered_species:
+            self.project_name += '_unorderedsp'
+        if dataset._include_atom_counts:
+            self.project_name += '_withcounts'
+        self.project_name += '_folds'
+
+    def run(self):
+        for fold, (trainidx, testidx) in enumerate(self.folds):
+            model, optimizer, loss_fn = self.ann_objects_fn()
+            tm = TrainingManager(
+                    model=model,
+                    loss_fn=loss_fn,
+                    optimizer=optimizer,
+                    training_dataset=Subset(self.dataset, trainidx),
+                    testing_dataset=Subset(self.dataset, testidx),
+                    load_project=False,
+                    batch_size=self.batch_size)
+            tm.train_loop(self.epochs)
+            self.metrics[f'fold{fold+1:02d}'] = tm.metrics
+
+    def save_metrics(self):
+        with open(self.project_name + '.p', 'wb') as f:
+            pickle.dump({
+                'epochs': self.epochs,
+                'metrics': self.metrics,
+                }, f)
+
 def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128, include_dropout=False, layer_sizes=None):
     ann = ArrheniusNet(
             num_inputs=ads.num_inputs,
@@ -499,7 +541,7 @@ def initialize_data_objects(training_percent=0.8, batch_size=64, include_atom_co
     train_dataset, test_dataset = random_split(ads, [train_size, test_size])
     return ads, train_dataset, test_dataset
 
-def main(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, resume=True):
+def main_train(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, resume=True):
     ads, train_dataset, test_dataset = initialize_data_objects(include_atom_counts=include_atom_counts, order_species=order_species)
     ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout, layer_sizes=layer_sizes)
     tm = TrainingManager(ann, loss_fn, optimizer, train_dataset, test_dataset, load_project=resume)
@@ -508,7 +550,20 @@ def main(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False
         tm.save()
     return tm
 
-def run_uniform_models():
+def main_crossvalidate(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, nfolds=10, batch_size=64):
+    ads, _, _ = initialize_data_objects(include_atom_counts=include_atom_counts, order_species=order_species)
+    ann_objects_fn = lambda: initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout, layer_sizes=layer_sizes)
+    cv = CrossValidation(
+            ann_objects_fn,
+            dataset=ads,
+            nfolds=nfolds,
+            batch_size=batch_size,
+            epochs=epochs)
+    cv.run()
+    cv.save_metrics()
+    return cv
+
+def run_uniform_models(crossvalidation=False):
     num_layers = [2, 3, 4, 5, 6]
     nodes_per_layer = [16, 32, 64, 128, 256, 512]
     include_atom_counts = [True, False]
@@ -519,18 +574,27 @@ def run_uniform_models():
             ):
         last_train_loss = 1e6
         last_test_loss = 1e6
-        tm = main(
-                num_layers=nl, nodes_per_layer=npl,
-                epochs=20,
-                include_dropout=dropout,
-                include_atom_counts=ic,
-                order_species=order,
-                resume=False,
-                )
-        tm.plot_scatters(show=False)
-        tm.plot_temporal_metrics(show=False)
+        if crossvalidation:
+            cv = main_crossvalidate(
+                    num_layers=nl, nodes_per_layer=npl,
+                    epochs=20,
+                    include_dropout=dropout,
+                    include_atom_counts=ic,
+                    order_species=order,
+                    )
+        else:
+            tm = main_train(
+                    num_layers=nl, nodes_per_layer=npl,
+                    epochs=20,
+                    include_dropout=dropout,
+                    include_atom_counts=ic,
+                    order_species=order,
+                    resume=False,
+                    )
+            tm.plot_scatters(show=False)
+            tm.plot_temporal_metrics(show=False)
 
-def run_nonuniform_models():
+def run_nonuniform_models(crossvalidation=False):
     architectures = [
             (16, 4, 8),
             (32, 8, 16),
@@ -565,17 +629,29 @@ def run_nonuniform_models():
             ):
         last_train_loss = 1e6
         last_test_loss = 1e6
-        tm = main(
-                epochs=20,
-                include_dropout=dropout,
-                layer_sizes=arch,
-                include_atom_counts=include_atom_counts,
-                order_species=order,
-                resume=False,
-                )
-        tm.plot_scatters(show=False)
-        tm.plot_temporal_metrics(show=False)
+        if crossvalidation:
+            cv = main_crossvalidate(
+                    epochs=20,
+                    include_dropout=dropout,
+                    layer_sizes=arch,
+                    include_atom_counts=ic,
+                    order_species=order,
+                    )
+        else:
+            tm = main_train(
+                    epochs=20,
+                    include_dropout=dropout,
+                    layer_sizes=arch,
+                    include_atom_counts=ic,
+                    order_species=order,
+                    )
+            tm.plot_scatters(show=False)
+            tm.plot_temporal_metrics(show=False)
 
 if __name__ == "__main__":
-    run_uniform_models()
-    run_nonuniform_models()
+    crossvalidation=False
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'cv':
+            crossvalidation = True
+    run_uniform_models(crossvalidation=crossvalidation)
+    run_nonuniform_models(crossvalidation=crossvalidation)
