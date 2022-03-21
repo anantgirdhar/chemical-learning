@@ -653,6 +653,10 @@ def run_nonuniform_models(crossvalidation=False):
             tm.plot_scatters(show=False)
             tm.plot_temporal_metrics(show=False)
 
+def main(crossvalidation):
+    run_uniform_models(crossvalidation=crossvalidation)
+    run_nonuniform_models(crossvalidation=crossvalidation)
+
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         raise ValueError('Usage: python learn_chemistry.py (train|cv)')
@@ -662,5 +666,4 @@ if __name__ == "__main__":
         crossvalidation = False
     else:
         raise ValueError(f'Unknown option {sys.argv[1]} provided')
-    run_uniform_models(crossvalidation=crossvalidation)
-    run_nonuniform_models(crossvalidation=crossvalidation)
+    main(crossvalidation)
