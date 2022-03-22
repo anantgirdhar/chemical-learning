@@ -244,6 +244,10 @@ def extract_best_crossvalidation_results(df):
             df.sort_values('max_PC_test_var').head(),
             df.sort_values('max_BFL_train_var').head(),
             df.sort_values('max_BFL_test_var').head(),
+            df.sort_values('mean_PC_train_mean', ascending=False).head(),
+            df.sort_values('mean_PC_test_mean', ascending=False).head(),
+            df.sort_values('mean_BFL_train_mean', ascending=False).head(),
+            df.sort_values('mean_BFL_test_mean', ascending=False).head(),
             ]
     results = pd.concat(results).drop_duplicates()
     # Sort the results by the max of the distances for each variable
