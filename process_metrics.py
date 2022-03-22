@@ -42,7 +42,7 @@ def read_folds_file(filename):
     metrics = data['metrics']
     return {k: parse_metrics(epochs, m) for k, m in metrics.items()}
 
-def get_params_from_filename(filename):
+def get_params_from_filename(filename, include_layers=False):
     filename = os.path.basename(filename)
     tokens = filename.split('.')[0].split('_')
     if 'layers' in filename:
@@ -50,15 +50,16 @@ def get_params_from_filename(filename):
         model_metadata = {
                 'inputs': int(tokens[1][len('in'):]),
                 'outputs': int(tokens[2][len('out'):]),
-                # 'layers': [
-                #     int(size)
-                #     for size in tokens[3][len('layers'):].split('-')
-                #     ],
                 'dropout': True if 'dropout' in tokens else False,
                 'order': False if 'unorderedsp' in tokens else True,
                 'atom_counts': True if 'withcounts' in tokens else False,
                 'uniform': False,
                 }
+        if include_layers:
+            model_metadata['layers'] = [
+                    int(size)
+                    for size in tokens[3][len('layers'):].split('-')
+                    ],
     else:
         # This is a uniform model
         model_metadata = {

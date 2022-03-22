@@ -653,17 +653,53 @@ def run_nonuniform_models(crossvalidation=False):
             tm.plot_scatters(show=False)
             tm.plot_temporal_metrics(show=False)
 
+def run_specific_models(model_summary_file):
+    from process_metrics import get_params_from_filename
+    with open(model_summary_file, 'rb') as f:
+        df = pickle.load(f)
+    for filename in df.index:
+        model_metadata = get_params_from_filename(filename, include_layers=True)
+        if model_metadata['uniform']:
+            tm = main_train(
+                    num_layers=model_metadata['num_layers'],
+                    nodes_per_layer=model_metadata['npl'],
+                    epochs=20,
+                    include_dropout=model_metadata['dropout'],
+                    include_atom_counts=model_metadata['atom_counts'],
+                    order_species=model_metadata['order'],
+                    resume=False,
+                    )
+            tm.plot_scatters(show=False)
+            tm.plot_temporal_metrics(show=False)
+        else:
+            tm = main_train(
+                    epochs=20,
+                    include_dropout=model_metadata['dropout'],
+                    layer_sizes=model_metadata['layers'][0],  # the layers list is stored as a tuple
+                    include_atom_counts=model_metadata['atom_counts'],
+                    order_species=model_metadata['order'],
+                    resume=False,
+                    )
+            tm.plot_scatters(show=False)
+            tm.plot_temporal_metrics(show=False)
+
 def main(crossvalidation):
     run_uniform_models(crossvalidation=crossvalidation)
     run_nonuniform_models(crossvalidation=crossvalidation)
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise ValueError('Usage: python learn_chemistry.py (train|cv)')
+    if len(sys.argv) < 2:
+        raise ValueError('Usage: python learn_chemistry.py (train|cv) [model_summary_file]')
     if sys.argv[1] == 'cv':
         crossvalidation = True
     elif sys.argv[1] == 'train':
         crossvalidation = False
     else:
         raise ValueError(f'Unknown option {sys.argv[1]} provided')
-    main(crossvalidation)
+    if len(sys.argv) == 3:
+        if crossvalidation:
+            raise NotImplementedError("No crossvalidation allowed on a summary file.")
+        model_summary_file = sys.argv[2]
+        run_specific_models(model_summary_file)
+    else:
+        main(crossvalidation)
