@@ -347,4 +347,9 @@ def main_folds():
     df2 = df[df['epoch'] == 10]
     df_grouped = get_mean_and_variance_across_folds(df2)
     best = extract_best_crossvalidation_results(df_grouped)
+    with open('best_crossvalidation_models.p', 'wb') as f:
+        pickle.dump(best, f)
     return df, df2, best
+
+if __name__ == "__main__":
+    main_folds()
