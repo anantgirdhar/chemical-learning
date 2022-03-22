@@ -430,6 +430,7 @@ class TrainingManager:
             plt.text(0.6, 0.05, f'PC = {PC_train[var]:.2f}', backgroundcolor='white', alpha=0.7)
         plt.suptitle(self.project_name)
         plt.tight_layout()
+        plt.savefig(self.project_name + '_scatters.png')
         if show:
             plt.show()
 
