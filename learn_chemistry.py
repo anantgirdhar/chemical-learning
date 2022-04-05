@@ -300,17 +300,17 @@ class TrainingManager:
     def _update_test_train_predictions(self):
         self.model.eval()
         # Update the test predictions
-        X = self.testing_dataset.dataset.x.float()
+        X = self.testing_dataset[:][0].float()
         self._predictions_test = self.model(X)
         # Update the training predictions
-        X = self.training_dataset.dataset.x.float()
+        X = self.training_dataset[:][0].float()
         self._predictions_train = self.model(X)
 
     def _compute_PC(self):
         if self._predictions_test is None or self._predictions_train is None:
             self._update_test_train_predictions()
         # Compute Pearson Coefficients for the testing data
-        y_test = self.testing_dataset.dataset.y.float()
+        y_test = self.testing_dataset[:][1].float()
         pearson_coefficients = []
         for var in range(y_test.shape[1]):
             pearson_coefficients.append(np.corrcoef([
@@ -318,7 +318,7 @@ class TrainingManager:
                 self._predictions_test[:, var].detach().numpy()])[0][1])
         self.metrics['test_PC'].append(tuple(pearson_coefficients))
         # Compute Pearson Coefficients for the training data
-        y_train = self.training_dataset.dataset.y.float()
+        y_train = self.training_dataset[:][1].float()
         pearson_coefficients = []
         for var in range(y_train.shape[1]):
             pearson_coefficients.append(np.corrcoef([
@@ -330,7 +330,7 @@ class TrainingManager:
         if self._predictions_test is None or self._predictions_train is None:
             self._update_test_train_predictions()
         # Compute the best fit lines for the testing data
-        y_test = self.testing_dataset.dataset.y.float().detach().numpy()
+        y_test = self.testing_dataset[:][1].float()
         self.metrics['test_BFL'].append([])
         for var in range(y_test.shape[1]):
             self.metrics['test_BFL'][-1].append(
@@ -340,7 +340,7 @@ class TrainingManager:
                         1
                         )))
         # Compute the best fit lines for the training data
-        y_train = self.training_dataset.dataset.y.float().detach().numpy()
+        y_train = self.training_dataset[:][1].float()
         self.metrics['train_BFL'].append([])
         for var in range(y_train.shape[1]):
             self.metrics['train_BFL'][-1].append(
@@ -398,10 +398,10 @@ class TrainingManager:
         if self._predictions_test is None or self._predictions_train is None:
             self._update_test_train_predictions()
         # Create aliases to the data for readability
-        y_test = self.testing_dataset.dataset.y.float().detach().numpy()
+        y_test = self.testing_dataset[:][1].float()
         pred_test = self._predictions_test.detach().numpy()
-        y_train = self.training_dataset.dataset.y.float().detach().numpy()
-        pred_train = self._predictions_train
+        y_train = self.training_dataset[:][1].float()
+        pred_train = self._predictions_train.detach().numpy()
         num_vars = y_test.shape[1]
         # Create aliases to the metrics
         PC_test = self.metrics['test_PC'][-1]
