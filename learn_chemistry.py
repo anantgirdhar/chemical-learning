@@ -68,7 +68,7 @@ class ArrheniusDataset(Dataset):
         # Do the one hot encoding
         x1 = F.one_hot(self._x[:, :4], num_classes=len(self.species_map))
         x1 = torch.flatten(x1, start_dim=1)
-        self.x = torch.concat([x1, self._x[:, 4:]], dim=1)
+        self.x = torch.concat([x1, self._x[:, 4:]], dim=1).to(device).float()
         # Create a copy of the outputs
         self.y = self._y.detach().clone()
         # Normalize the outputs
@@ -77,6 +77,7 @@ class ArrheniusDataset(Dataset):
         self._minimum = self.y.min(dim=0).values
         self._maximum = self.y.max(dim=0).values
         self.y = (self.y - self._minimum) / (self._maximum - self._minimum)
+        self.y = self.y.to(device).float()
 
     def _unstandardize(self, y):
         """Unstandardize the outputs
@@ -187,6 +188,15 @@ class ArrheniusNet(nn.Module):
         # Create the network
         self.linear_relu_stack = nn.Sequential(layers)
 
+    def __call__(self, X):
+        if isinstance(X, torch.Tensor):
+            pass
+        elif isinstance(X, Dataset):
+            X = X[:][0]
+        else:
+            raise TypeError(f'Unknown type {type(X)} in ArrheniusNet.__call__')
+        return super().__call__(X)
+
     def forward(self, x):
         return self.linear_relu_stack(x)
 
@@ -234,89 +244,105 @@ class ArrheniusNet(nn.Module):
 
 class TrainingManager:
 
-    def __init__(self, model=None, loss_fn=None, optimizer=None, training_dataset=None, testing_dataset=None, load_project=True, batch_size=64):
+    def __init__(
+            self,
+            model=None, loss_fn=None, optimizer=None,
+            training_dataset=None, validation_dataset=None,
+            testing_dataset=None,
+            load_project=True,
+            batch_size=64,
+            project_name='TrainingManager',
+            ):
         self.model = model
         self.loss_fn = loss_fn
         self.optimizer = optimizer
         self.training_dataset = training_dataset
+        self.validation_dataset = validation_dataset
         self.testing_dataset = testing_dataset
         #TODO: Shuffle the data
         self.training_dataloader = DataLoader(training_dataset, batch_size=batch_size)
-        self.testing_dataloader = DataLoader(testing_dataset, batch_size=batch_size)
+        self.validation_dataloader = DataLoader(validation_dataset, batch_size=batch_size)
         self.epoch = 0
         self.metrics = {
                 'train_loss': [],
-                'test_loss': [],
+                'validation_loss': [],
                 'train_PC': [],
-                'test_PC': [],
+                'validation_PC': [],
                 'train_BFL': [],
-                'test_BFL': [],
+                'validation_BFL': [],
                 }
-        self.project_name = model.project_name
-        if not self.training_dataset.dataset._ordered_species:
-            self.project_name += '_unorderedsp'
-        if self.training_dataset.dataset._include_atom_counts:
-            self.project_name += '_withcounts'
-        self._predictions_test = None
+        self.project_name = project_name
         self._predictions_train = None
+        self._predictions_validation = None
+        # Add in the testing variables if needed
+        if testing_dataset:
+            self.testing_dataloader = DataLoader(testing_dataset, batch_size=batch_size)
+            self.metrics.update({
+                'testing_loss': [],
+                'testing_PC': [],
+                'testing_BFL': [],
+                })
+            self._predictions_testing = None
         if load_project:
-            self.load(model.project_name)
+            self.load()
 
     def _train_one_epoch(self):
         size = len(self.training_dataloader.dataset)
-        num_batches = len(self.training_dataloader)
+        # num_batches = len(self.training_dataloader)
         # Begin training
         running_loss = 0.
         self.model.train()
         for batch, (X, y) in enumerate(self.training_dataloader):
-            X, y = X.to(device).float(), y.to(device).float()
             pred = self.model(X)
             loss = self.loss_fn(pred, y)
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
             running_loss += loss.item()
-        # Compute the loss per record to compare it with the testing loss
+        # Compute the loss per record to compare it with the validation loss
         self.metrics['train_loss'].append(running_loss / size)
         self.epoch += 1
         # Reset the predictions
-        self._predictions_test = None
         self._predictions_train = None
+        self._predictions_validation = None
+        if self.testing_dataset:
+            self._predictions_testing = None
 
     @torch.no_grad()
-    def _test(self):
-        size = len(self.testing_dataloader.dataset)
-        num_batches = len(self.testing_dataloader)
+    def _get_testing_loss(self, dataloader):
+        size = len(dataloader.dataset)
+        # num_batches = len(dataloader)
         running_loss = 0.
         self.model.eval()
-        for X, y in self.testing_dataloader:
-            X, y = X.to(device).float(), y.to(device).float()
+        for X, y in dataloader:
             pred = self.model(X)
             running_loss += self.loss_fn(pred, y).item()
-        # Compute the loss per record to compare it with the training loss
-        self.metrics['test_loss'].append(running_loss / size)
+        # Return the loss per record so that it can be compared with the
+        # training loss accurately
+        return running_loss / size
 
     @torch.no_grad()
-    def _update_test_train_predictions(self):
+    def _update_train_validation_predictions(self):
         self.model.eval()
-        # Update the test predictions
-        X = self.testing_dataset[:][0].float()
-        self._predictions_test = self.model(X)
         # Update the training predictions
-        X = self.training_dataset[:][0].float()
-        self._predictions_train = self.model(X)
+        self._predictions_train = self.model(self.training_dataset)
+        # Update the validation predictions
+        self._predictions_validation = self.model(self.validation_dataset)
+        # Update the testing predictions if required
+        if self.testing_dataset:
+            self._predictions_testing = self.model(self.testing_dataset)
 
     def _compute_PC(self):
-        if self._predictions_test is None or self._predictions_train is None:
-            self._update_test_train_predictions()
-        # Compute Pearson Coefficients for the testing data
-        y_test = self.testing_dataset[:][1].float()
+        if self._predictions_validation is None or self._predictions_train is None:
+            self._update_train_validation_predictions()
+        # Compute Pearson Coefficients for the validation data
+        y_validation = self.validation_dataset[:][1].float()
         pearson_coefficients = []
-        for var in range(y_test.shape[1]):
+        for var in range(y_validation.shape[1]):
             pearson_coefficients.append(np.corrcoef([
-                y_test[:, var].detach().numpy(),
-                self._predictions_test[:, var].detach().numpy()])[0][1])
-        self.metrics['test_PC'].append(tuple(pearson_coefficients))
+                y_validation[:, var].detach().numpy(),
+                self._predictions_validation[:, var].detach().numpy()])[0][1])
+        self.metrics['validation_PC'].append(tuple(pearson_coefficients))
         # Compute Pearson Coefficients for the training data
         y_train = self.training_dataset[:][1].float()
         pearson_coefficients = []
@@ -325,18 +351,27 @@ class TrainingManager:
                 y_train[:, var].detach().numpy(),
                 self._predictions_train[:, var].detach().numpy()])[0][1])
         self.metrics['train_PC'].append(tuple(pearson_coefficients))
+        # Compute the Pearson Coefficients for the testing data if required
+        if self.testing_dataset:
+            y_testing = self.testing_dataset[:][1].float()
+            pearson_coefficients = []
+            for var in range(y_testing.shape[1]):
+                pearson_coefficients.append(np.corrcoef([
+                    y_testing[:, var].detach().numpy(),
+                    self._predictions_testing[:, var].detach().numpy()])[0][1])
+            self.metrics['testing_PC'].append(tuple(pearson_coefficients))
 
     def _compute_best_fit_lines(self):
-        if self._predictions_test is None or self._predictions_train is None:
-            self._update_test_train_predictions()
-        # Compute the best fit lines for the testing data
-        y_test = self.testing_dataset[:][1].float()
-        self.metrics['test_BFL'].append([])
-        for var in range(y_test.shape[1]):
-            self.metrics['test_BFL'][-1].append(
+        if self._predictions_validation is None or self._predictions_train is None:
+            self._update_train_validation_predictions()
+        # Compute the best fit lines for the validation data
+        y_validation = self.validation_dataset[:][1].float()
+        self.metrics['validation_BFL'].append([])
+        for var in range(y_validation.shape[1]):
+            self.metrics['validation_BFL'][-1].append(
                     np.poly1d(np.polyfit(
-                        y_test[:, var],
-                        self._predictions_test[:, var].detach().numpy(),
+                        y_validation[:, var],
+                        self._predictions_validation[:, var].detach().numpy(),
                         1
                         )))
         # Compute the best fit lines for the training data
@@ -349,6 +384,17 @@ class TrainingManager:
                         self._predictions_train[:, var].detach().numpy(),
                         1
                         )))
+        # Compute the best fit lines for the testing data if required
+        if self.testing_dataset:
+            y_testing = self.testing_dataset[:][1].float()
+            self.metrics['testing_BFL'].append([])
+            for var in range(y_testing.shape[1]):
+                self.metrics['testing_BFL'][-1].append(
+                        np.poly1d(np.polyfit(
+                            y_testing[:, var],
+                            self._predictions_testing[:, var].detach().numpy(),
+                            1
+                            )))
 
     def _compute_metrics(self):
         self._compute_PC()
@@ -358,11 +404,17 @@ class TrainingManager:
         print(f'\nTraining model {self.project_name}')
         for i in range(epochs):
             self._train_one_epoch()
-            self._test()
+            self.metrics['validation_loss'].append(
+                    self._get_testing_loss(self.validation_dataloader)
+                    )
+            if self.testing_dataset:
+                self.metrics['testing_loss'].append(
+                        self._get_testing_loss(self.testing_dataloader)
+                        )
             self._compute_metrics()
             print(f'Epoch {self.epoch:03d} '
                   f'- Training {self.metrics["train_loss"][-1]:.3e} '
-                  f'| Testing {self.metrics["test_loss"][-1]:.3e}'
+                  f'| Validation {self.metrics["validation_loss"][-1]:.3e}'
                   )
 
     def save(self):
@@ -374,7 +426,7 @@ class TrainingManager:
             'metrics': self.metrics,
             }, self.project_name + '.pth')
 
-    def load(self, project_name):
+    def load(self):
         if os.path.isfile(self.project_name + '.pth'):
             checkpoint = torch.load(self.project_name + '.pth')
             print(f'Reading {self.project_name}.pth')
@@ -389,38 +441,38 @@ class TrainingManager:
             self.metrics = checkpoint['metrics']
             print(f'Last loss: '
                   f'training {self.metrics["train_loss"][-1]:.3e} | '
-                  f'Testing {self.metrics["test_loss"][-1]:.3e}'
+                  f'Validation {self.metrics["validation_loss"][-1]:.3e}'
                   )
         else:
             print(f'Tried to load but file {self.project_name}.pth not found.')
 
     def plot_scatters(self, show=True):
-        if self._predictions_test is None or self._predictions_train is None:
-            self._update_test_train_predictions()
+        if self._predictions_validation is None or self._predictions_train is None:
+            self._update_train_validation_predictions()
         # Create aliases to the data for readability
-        y_test = self.testing_dataset[:][1].float()
-        pred_test = self._predictions_test.detach().numpy()
+        y_validation = self.validation_dataset[:][1].float()
+        pred_validation = self._predictions_validation.detach().numpy()
         y_train = self.training_dataset[:][1].float()
         pred_train = self._predictions_train.detach().numpy()
-        num_vars = y_test.shape[1]
+        num_vars = y_validation.shape[1]
         # Create aliases to the metrics
-        PC_test = self.metrics['test_PC'][-1]
+        PC_validation = self.metrics['validation_PC'][-1]
         PC_train = self.metrics['train_PC'][-1]
-        BFL_test = self.metrics['test_BFL'][-1]
+        BFL_validation = self.metrics['validation_BFL'][-1]
         BFL_train = self.metrics['train_BFL'][-1]
         # Create two rows of plots
-        # The top row will have the test scatter data
+        # The top row will have the validation scatter data
         # The bottom row will have the training scatter data
         plt.subplots(2, num_vars, sharey=True, sharex=True)
         _range = np.linspace(0, 1, 51)
         for var in range(num_vars):
             plt.subplot(231 + var)
-            plt.plot(y_test[:, var], pred_test[:, var], 'bx')
-            line = np.poly1d(BFL_test[var])
+            plt.plot(y_validation[:, var], pred_validation[:, var], 'bx')
+            line = np.poly1d(BFL_validation[var])
             plt.plot(_range, line(_range), 'r-')
             plt.plot(_range, _range, 'k--')
-            plt.title(f'Test [{var=}]: {line}')
-            plt.text(0.6, 0.05, f'PC = {PC_test[var]:.2f}', backgroundcolor='white', alpha=0.7)
+            plt.title(f'Validation [{var=}]: {line}')
+            plt.text(0.6, 0.05, f'PC = {PC_validation[var]:.2f}', backgroundcolor='white', alpha=0.7)
             plt.subplot(231 + num_vars + var)
             plt.plot(y_train[:, var], pred_train[:, var], 'bx')
             line = np.poly1d(BFL_train[var])
@@ -434,39 +486,67 @@ class TrainingManager:
         if show:
             plt.show()
 
+    def plot_test_scatters(self, show=True):
+        if 'testing_PC' not in self.metrics or 'testing_BFL' not in self.metrics:
+            raise KeyError('Testing data not found in metrics.')
+        if self._predictions_testing is None:
+            self._update_train_validation_predictions()
+        # Create aliases to the data for readability
+        y_testing = self.testing_dataset[:][1].float()
+        pred_testing = self._predictions_testing.detach().numpy()
+        num_vars = y_testing.shape[1]
+        # Create aliases to the metrics
+        PC_testing = self.metrics['testing_PC'][-1]
+        BFL_testing = self.metrics['testing_BFL'][-1]
+        # Create the plots
+        plt.subplots(1, num_vars, sharey=True, sharex=True)
+        _range = np.linspace(0, 1, 51)
+        for var in range(num_vars):
+            plt.subplot(131 + var)
+            plt.plot(y_testing[:, var], pred_testing[:, var], 'bx')
+            line = np.poly1d(BFL_testing[var])
+            plt.plot(_range, line(_range), 'r-')
+            plt.plot(_range, _range, 'k--')
+            plt.title(f'Testing [{var=}]: {line}')
+            plt.text(0.6, 0.05, f'PC = {PC_testing[var]:.2f}', backgroundcolor='white', alpha=0.7)
+        plt.suptitle(self.project_name)
+        plt.tight_layout()
+        plt.savefig(self.project_name + '_testscatters.png')
+        if show:
+            plt.show()
+
     def plot_temporal_metrics(self, log_scale=True, show=True):
         plt.subplots(2, 1, sharex=True, figsize=(14, 10))
         _range = range(1, self.epoch+1)
-        train_markers = ['bo', 'cs', 'kd']
-        test_markers = ['rx', 'mv', 'y^']
+        marker_colors = ['b', 'm', 'k', 'c']
         # Plot the loss
         plt.subplot(211)
         if log_scale:
-            plt.semilogy(_range, self.metrics['train_loss'],'bo-', label='train loss')
-            plt.semilogy(_range, self.metrics['test_loss'],'rx--', label='test loss')
+            plt.semilogy(_range, self.metrics['validation_loss'],'ro-', label='validation loss')
+            plt.semilogy(_range, self.metrics['train_loss'],'bx--', label='train loss')
         else:
-            plt.plot(_range, self.metrics['train_loss'],'bo-', label='train loss')
-            plt.plot(_range, self.metrics['test_loss'],'rx--', label='test loss')
+            plt.plot(_range, self.metrics['validation_loss'],'ro-', label='validation loss')
+            plt.plot(_range, self.metrics['train_loss'],'bx--', label='train loss')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.legend(loc='best')
         # Plot the pearson correlation coefficients
         plt.subplot(223)
         PC_train = list(zip(*self.metrics['train_PC']))
-        PC_test = list(zip(*self.metrics['test_PC']))
+        PC_validation = list(zip(*self.metrics['validation_PC']))
         for i in range(len(PC_train)):
-            plt.plot(_range, PC_train[i], train_markers[i]+'-', label=f'PC {i} train')
-            plt.plot(_range, PC_test[i], test_markers[i]+'--', label=f'PC {i} test')
+            plt.plot(_range, PC_validation[i], marker_colors[i]+'o-', label=f'PC {i} val')
+            plt.plot(_range, PC_train[i], marker_colors[i]+'x--', label=f'PC {i} train')
         plt.xlabel('Epoch')
         plt.ylabel('PC')
         plt.legend(loc='best')
         # Plot the best fit line slopes
         plt.subplot(224)
         BFL_train = list(zip(*self.metrics['train_BFL']))
-        BFL_test = list(zip(*self.metrics['test_BFL']))
+        BFL_validation = list(zip(*self.metrics['validation_BFL']))
         for i in range(len(BFL_train)):
-            plt.plot(_range, [x[1] for x in BFL_train[i]], train_markers[i]+'-', label=f'BFL {i} train')
-            plt.plot(_range, [x[1] for x in BFL_test[i]], test_markers[i]+'--', label=f'BFL {i} test')
+            plt.plot(_range, [x[1] for x in BFL_validation[i]], marker_colors[i]+'o-', label=f'BFL {i} val')
+            plt.plot(_range, [x[1] for x in BFL_train[i]], marker_colors[i]+'x--', label=f'BFL {i} train')
         plt.xlabel('Epoch')
         plt.ylabel('BFL slopes')
         plt.legend(loc='best')
@@ -481,8 +561,8 @@ class TrainingManager:
 
 class CrossValidation:
 
-    def __init__(self, ann_objects_fn, dataset, nfolds=10, batch_size=64, epochs=20):
-        self.ann_objects_fn = ann_objects_fn
+    def __init__(self, ANNGenerator, dataset, nfolds=10, batch_size=64, epochs=20, project_name='CrossValidation'):
+        self.ANNGenerator = ANNGenerator
         self.dataset = dataset
         self.nfolds = nfolds
         self.batch_size = batch_size
@@ -490,26 +570,23 @@ class CrossValidation:
         self.folds = KFold(n_splits=nfolds, shuffle=True, random_state=42)
         self.folds = self.folds.split(range(len(dataset)))
         self.metrics = {f'fold{foldnum+1:02d}': None for foldnum in range(nfolds)}
-        # To get the project name, create a throwaway model
-        model, _, _ = self.ann_objects_fn()
-        self.project_name = model.project_name
-        if not dataset._ordered_species:
-            self.project_name += '_unorderedsp'
-        if dataset._include_atom_counts:
-            self.project_name += '_withcounts'
-        self.project_name += '_folds'
+        self.project_name = project_name
 
     def run(self):
-        for fold, (trainidx, testidx) in enumerate(self.folds):
-            model, optimizer, loss_fn = self.ann_objects_fn()
+        for fold, (trainidx, validx) in enumerate(self.folds):
+            model, optimizer, loss_fn = self.ANNGenerator()
             tm = TrainingManager(
                     model=model,
                     loss_fn=loss_fn,
                     optimizer=optimizer,
-                    training_dataset=Subset(self.dataset, trainidx),
-                    testing_dataset=Subset(self.dataset, testidx),
+                    # Convert the indices to a list so that the Subset can
+                    # __getitem__ later
+                    training_dataset=Subset(self.dataset, list(trainidx)),
+                    validation_dataset=Subset(self.dataset, list(validx)),
                     load_project=False,
-                    batch_size=self.batch_size)
+                    batch_size=self.batch_size,
+                    project_name=self.project_name,
+                    )
             tm.train_loop(self.epochs)
             self.metrics[f'fold{fold+1:02d}'] = tm.metrics
 
@@ -533,33 +610,89 @@ def initialize_learning_objects(ads, num_layers=5, nodes_per_layer=128, include_
     optimizer = optim.Adam(ann.parameters(), lr=1e-3)
     return ann, optimizer, loss_fn
 
-def initialize_data_objects(training_percent=0.8, batch_size=64, include_atom_counts=False, order_species=True):
+def initialize_data_objects(testing_fraction=0.2, include_atom_counts=False, order_species=True):
     ads = ArrheniusDataset(include_atom_counts, order_species=order_species)
-    # Split into training and testing data
+    # Split the dataset into a training and testing dataset
     torch.manual_seed(0)
-    train_size = int(0.8 * len(ads))
-    test_size = len(ads) - train_size
+    test_size = int(testing_fraction * len(ads))
+    train_size = len(ads) - test_size
     train_dataset, test_dataset = random_split(ads, [train_size, test_size])
     return ads, train_dataset, test_dataset
 
-def main_train(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, resume=True):
-    ads, train_dataset, test_dataset = initialize_data_objects(include_atom_counts=include_atom_counts, order_species=order_species)
-    ann, optimizer, loss_fn = initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout, layer_sizes=layer_sizes)
-    tm = TrainingManager(ann, loss_fn, optimizer, train_dataset, test_dataset, load_project=resume)
-    if not resume:
-        tm.train_loop(epochs)
+def main_train(
+        num_layers=None, nodes_per_layer=None,
+        layer_sizes=None,
+        epochs=40,
+        include_dropout=False,
+        include_atom_counts=False,
+        order_species=True,
+        resume=True,
+        validation_fraction=0.05,
+        include_testing=False,
+        ):
+    ads, train_dataset, test_dataset = initialize_data_objects(
+            include_atom_counts=include_atom_counts,
+            order_species=order_species,
+            )
+    # Add in a safeguard to prevent the testing set from being used
+    if not include_testing:
+        test_dataset = None
+    # Split the training set into a training and a validation set
+    validation_size = int(validation_fraction * len(train_dataset))
+    train_size = len(train_dataset) - validation_size
+    train_dataset, validation_dataset = random_split(train_dataset, [train_size, validation_size])
+    # Initialize the model
+    ann, optimizer, loss_fn = initialize_learning_objects(
+            ads,
+            num_layers, nodes_per_layer,
+            include_dropout=include_dropout,
+            layer_sizes=layer_sizes,
+            )
+    # Build the project name from the model and the dataset
+    project_name = ann.project_name
+    if ads._ordered_species:
+        project_name += '_unorderedsp'
+    if ads._include_atom_counts:
+        project_name += '_withcounts'
+    # Create the Training Manager
+    tm = TrainingManager(
+            model=ann,
+            loss_fn=loss_fn,
+            optimizer=optimizer,
+            training_dataset=train_dataset,
+            validation_dataset=validation_dataset,
+            testing_dataset=test_dataset,
+            load_project=resume,
+            project_name=project_name,
+            )
+    # Check how many epochs have been trained
+    epochs_trained = tm.epoch
+    # If we're not resuming (i.e. we're forcing computation) or if we haven't
+    # trained enough epochs, train some more epochs
+    if not resume or epochs_trained < epochs:
+        tm.train_loop(epochs - epochs_trained)
         tm.save()
     return tm
 
 def main_crossvalidate(num_layers=None, nodes_per_layer=None, epochs=40, include_dropout=False, layer_sizes=None, include_atom_counts=False, order_species=True, nfolds=10, batch_size=64, force_computations=False):
-    ads, _, _ = initialize_data_objects(include_atom_counts=include_atom_counts, order_species=order_species)
-    ann_objects_fn = lambda: initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout, layer_sizes=layer_sizes)
+    ads, training_dataset, _ = initialize_data_objects(include_atom_counts=include_atom_counts, order_species=order_species)
+    ANNGenerator = lambda: initialize_learning_objects(ads, num_layers, nodes_per_layer, include_dropout=include_dropout, layer_sizes=layer_sizes)
+    # Build the project name
+    model, _, _ = ANNGenerator()  # Create a throwaway model to get the project name
+    project_name = model.project_name
+    if ads._ordered_species:
+        project_name += '_unorderedsp'
+    if ads._include_atom_counts:
+        project_name += '_withcounts'
+    project_name += '_folds'
+    # Setup the Cross Validation run
     cv = CrossValidation(
-            ann_objects_fn,
-            dataset=ads,
+            ANNGenerator,
+            dataset=training_dataset,
             nfolds=nfolds,
             batch_size=batch_size,
             epochs=epochs,
+            project_name=project_name,
             )
     # Don't do anything if this is already done and we're not forcing it
     if not force_computations and os.path.exists(cv.project_name + '.p'):
@@ -645,9 +778,9 @@ def run_nonuniform_models(crossvalidation=False):
                     )
         else:
             tm = main_train(
+                    layer_sizes=arch,
                     epochs=20,
                     include_dropout=dropout,
-                    layer_sizes=arch,
                     include_atom_counts=ic,
                     order_species=order,
                     )
@@ -668,9 +801,11 @@ def run_specific_models(model_summary_file):
                     include_dropout=model_metadata['dropout'],
                     include_atom_counts=model_metadata['atom_counts'],
                     order_species=model_metadata['order'],
-                    resume=False,
+                    resume=True,
+                    include_testing=True,
                     )
             tm.plot_scatters(show=False)
+            tm.plot_test_scatters(show=False)
             tm.plot_temporal_metrics(show=False)
         else:
             tm = main_train(
@@ -679,28 +814,43 @@ def run_specific_models(model_summary_file):
                     layer_sizes=model_metadata['layers'][0],  # the layers list is stored as a tuple
                     include_atom_counts=model_metadata['atom_counts'],
                     order_species=model_metadata['order'],
-                    resume=False,
+                    resume=True,
+                    include_testing=True,
                     )
             tm.plot_scatters(show=False)
+            tm.plot_test_scatters(show=False)
             tm.plot_temporal_metrics(show=False)
 
 def main(crossvalidation):
     run_uniform_models(crossvalidation=crossvalidation)
     run_nonuniform_models(crossvalidation=crossvalidation)
 
+def print_usage_and_exit():
+    print('''Usage:
+
+    To train model:
+        $ python learn_chemistry.py train (model_summary_file|all)
+
+    To run crossvalidation:
+        $ python learn_chemistry.py cv
+    ''')
+    sys.exit(1)
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        raise ValueError('Usage: python learn_chemistry.py (train|cv) [model_summary_file]')
-    if sys.argv[1] == 'cv':
-        crossvalidation = True
-    elif sys.argv[1] == 'train':
-        crossvalidation = False
-    else:
-        raise ValueError(f'Unknown option {sys.argv[1]} provided')
-    if len(sys.argv) == 3:
-        if crossvalidation:
-            raise NotImplementedError("No crossvalidation allowed on a summary file.")
+        print_usage_and_exit()
+    if sys.argv[1] == 'train':
+        if len(sys.argv) < 3:
+            print_usage_and_exit()
         model_summary_file = sys.argv[2]
-        run_specific_models(model_summary_file)
+        if model_summary_file == 'all':
+            main(crossvalidation=False)
+        else:
+            run_specific_models(model_summary_file)
+    elif sys.argv[1] == 'cv':
+        if len(sys.argv) > 2:
+            print_usage_and_exit()
+        main(crossvalidation=True)
     else:
-        main(crossvalidation)
+        print(f'Unknown command {sys.argv[1]}')
+        print_usage_and_exit()
