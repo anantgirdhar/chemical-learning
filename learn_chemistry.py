@@ -650,7 +650,7 @@ def main_train(
             )
     # Build the project name from the model and the dataset
     project_name = ann.project_name
-    if ads._ordered_species:
+    if not ads._ordered_species:
         project_name += '_unorderedsp'
     if ads._include_atom_counts:
         project_name += '_withcounts'
@@ -793,6 +793,7 @@ def run_specific_models(model_summary_file):
         df = pickle.load(f)
     for filename in df.index:
         model_metadata = get_params_from_filename(filename, include_layers=True)
+        print(f'Asked to train model {filename}')
         if model_metadata['uniform']:
             tm = main_train(
                     num_layers=model_metadata['num_layers'],
