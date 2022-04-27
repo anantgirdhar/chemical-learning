@@ -128,9 +128,11 @@ def get_compiled_df(compiled_data_filename='compiled_data.p'):
 
 def get_compiled_folds_df(compiled_data_filename='compiled_folds_data.p'):
     if not os.path.isfile(compiled_data_filename):
+        print('compiled_folds_data.p not found. Generating...')
         df = compile_fold_files(glob('cross_validation_pickles/*.p'))
         df.to_pickle(compiled_data_filename)
     else:
+        print('Found compiled_folds_data.p. Reading...')
         df = pd.read_pickle(compiled_data_filename)
     df['PC_avg_train'] = df[['PC1_train', 'PC2_train', 'PC3_train']].mean(axis=1)
     df['PC_avg_validation'] = df[['PC1_validation', 'PC2_validation', 'PC3_validation']].mean(axis=1)
