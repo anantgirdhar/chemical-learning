@@ -1,6 +1,7 @@
 from glob import glob
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import numpy as np
 import os
 import pandas as pd
 import pickle
@@ -115,15 +116,15 @@ def get_compiled_df(compiled_data_filename='compiled_data.p'):
         df.to_pickle(compiled_data_filename)
     else:
         df = pd.read_pickle(compiled_data_filename)
-    df['PC_avg_train'] = df[['PC1_train', 'PC2_train', 'PC3_train']].mean(axis=1)
-    df['PC_avg_validation'] = df[['PC1_validation', 'PC2_validation', 'PC3_validation']].mean(axis=1)
-    df['PC_var_train'] = df[['PC1_train', 'PC2_train', 'PC3_train']].var(axis=1)
-    df['PC_var_validation'] = df[['PC1_validation', 'PC2_validation', 'PC3_validation']].var(axis=1)
-    df['BFL_avg_train'] = df[['BFL1_train', 'BFL2_train', 'BFL3_train']].mean(axis=1)
-    df['BFL_avg_validation'] = df[['BFL1_validation', 'BFL2_validation', 'BFL3_validation']].mean(axis=1)
-    df['BFL_var_train'] = df[['BFL1_train', 'BFL2_train', 'BFL3_train']].var(axis=1)
-    df['BFL_var_validation'] = df[['BFL1_validation', 'BFL2_validation', 'BFL3_validation']].var(axis=1)
-    df['max_var'] = df[['PC_var_train', 'PC_var_validation', 'BFL_var_train', 'BFL_var_validation']].max(axis=1)
+    df['PC_avg_train'] = df[['PC1_train', 'PC2_train', 'PC3_train']].mean(axis=1, skipna=False)
+    df['PC_avg_validation'] = df[['PC1_validation', 'PC2_validation', 'PC3_validation']].mean(axis=1, skipna=False)
+    df['PC_var_train'] = df[['PC1_train', 'PC2_train', 'PC3_train']].var(axis=1, skipna=False)
+    df['PC_var_validation'] = df[['PC1_validation', 'PC2_validation', 'PC3_validation']].var(axis=1, skipna=False)
+    df['BFL_avg_train'] = df[['BFL1_train', 'BFL2_train', 'BFL3_train']].mean(axis=1, skipna=False)
+    df['BFL_avg_validation'] = df[['BFL1_validation', 'BFL2_validation', 'BFL3_validation']].mean(axis=1, skipna=False)
+    df['BFL_var_train'] = df[['BFL1_train', 'BFL2_train', 'BFL3_train']].var(axis=1, skipna=False)
+    df['BFL_var_validation'] = df[['BFL1_validation', 'BFL2_validation', 'BFL3_validation']].var(axis=1, skipna=False)
+    df['max_var'] = df[['PC_var_train', 'PC_var_validation', 'BFL_var_train', 'BFL_var_validation']].max(axis=1, skipna=False)
     return df
 
 def get_compiled_folds_df(compiled_data_filename='compiled_folds_data.p'):
@@ -134,15 +135,15 @@ def get_compiled_folds_df(compiled_data_filename='compiled_folds_data.p'):
     else:
         print('Found compiled_folds_data.p. Reading...')
         df = pd.read_pickle(compiled_data_filename)
-    df['PC_avg_train'] = df[['PC1_train', 'PC2_train', 'PC3_train']].mean(axis=1)
-    df['PC_avg_validation'] = df[['PC1_validation', 'PC2_validation', 'PC3_validation']].mean(axis=1)
-    df['PC_var_train'] = df[['PC1_train', 'PC2_train', 'PC3_train']].var(axis=1)
-    df['PC_var_validation'] = df[['PC1_validation', 'PC2_validation', 'PC3_validation']].var(axis=1)
-    df['BFL_avg_train'] = df[['BFL1_train', 'BFL2_train', 'BFL3_train']].mean(axis=1)
-    df['BFL_avg_validation'] = df[['BFL1_validation', 'BFL2_validation', 'BFL3_validation']].mean(axis=1)
-    df['BFL_var_train'] = df[['BFL1_train', 'BFL2_train', 'BFL3_train']].var(axis=1)
-    df['BFL_var_validation'] = df[['BFL1_validation', 'BFL2_validation', 'BFL3_validation']].var(axis=1)
-    df['max_var'] = df[['PC_var_train', 'PC_var_validation', 'BFL_var_train', 'BFL_var_validation']].max(axis=1)
+    df['PC_avg_train'] = df[['PC1_train', 'PC2_train', 'PC3_train']].mean(axis=1, skipna=False)
+    df['PC_avg_validation'] = df[['PC1_validation', 'PC2_validation', 'PC3_validation']].mean(axis=1, skipna=False)
+    df['PC_var_train'] = df[['PC1_train', 'PC2_train', 'PC3_train']].var(axis=1, skipna=False)
+    df['PC_var_validation'] = df[['PC1_validation', 'PC2_validation', 'PC3_validation']].var(axis=1, skipna=False)
+    df['BFL_avg_train'] = df[['BFL1_train', 'BFL2_train', 'BFL3_train']].mean(axis=1, skipna=False)
+    df['BFL_avg_validation'] = df[['BFL1_validation', 'BFL2_validation', 'BFL3_validation']].mean(axis=1, skipna=False)
+    df['BFL_var_train'] = df[['BFL1_train', 'BFL2_train', 'BFL3_train']].var(axis=1, skipna=False)
+    df['BFL_var_validation'] = df[['BFL1_validation', 'BFL2_validation', 'BFL3_validation']].var(axis=1, skipna=False)
+    df['max_var'] = df[['PC_var_train', 'PC_var_validation', 'BFL_var_train', 'BFL_var_validation']].max(axis=1, skipna=False)
     return df
 
 ##### DATA ANALYSIS #####
@@ -162,9 +163,9 @@ def get_mean_and_variance_across_folds(df):
         'BFL3_train', 'BFL3_validation',
         'inputs', 'outputs', 'dropout', 'order', 'atom_counts',
         'uniform', 'num_layers', 'npl'
-        ]].groupby('model_name')
-    mean = groups.mean()
-    var = groups.var()
+        ]].replace(np.nan, np.inf).groupby('model_name')
+    mean = groups.mean().replace(np.inf, np.nan)
+    var = groups.var().replace(np.inf, np.nan)
     # Rename the columsn so that the dataframes can be joined together
     no_rename_list = [
             'epoch',
@@ -223,7 +224,7 @@ def extract_best_models(final_df, BFL_tolerance=0.6, PC_tolerance=0.6):
     distance = [1, 1, 1, 1] - final_df[[
         'BFL_avg_train', 'BFL_avg_validation', 'PC_avg_train', 'PC_avg_validation'
         ]]
-    distance = (distance ** 2.).sum(axis=1).pow(0.5)
+    distance = (distance ** 2.).sum(axis=1, skipna=False).pow(0.5)
     final_df['distance'] = distance
     return final_df.sort_values('distance', ascending=True)
 
