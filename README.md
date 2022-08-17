@@ -32,3 +32,16 @@ description of the code files in here.
     each molecule.
   - I wasn't really sure how to interpret the results so I've left this for
     later.
+
+## CNN Experiments
+
+- `generate_shock_tube_data.py`:
+  - I decided that it was probably easier to have a script that generates the
+    required data as opposed to building this in to the machine learning
+    scripts.
+  - This script outputs various pieces of information that we can learn from
+    including:
+    - thermodynamic variables (temperature, density, pressure, mass fractions)
+    - progress rates
+    - production rates
+    - heat production rates
