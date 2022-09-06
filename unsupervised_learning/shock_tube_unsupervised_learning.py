@@ -1,28 +1,9 @@
 # coding: utf-8
-"""
-Ignition delay time computations in a high-pressure reflected shock tube
-reactor, comparing ideal gas and Redlich-Kwong real gas models.
-
-In this example we illustrate how to setup and use a constant volume,
-adiabatic reactor to simulate reflected shock tube experiments. This reactor
-will then be used to compute the ignition delay of a gas at a specified
-initial temperature and pressure. The example is written in a general way,
-that is, no particular EoS is presumed and ideal and real gas EoS can be used
-equally easily.
-
-The reactor (system) is simply an 'insulated box,' and can technically be used
-for any number of equations of state and constant-volume, adiabatic reactors.
-
-Other than the typical Cantera dependencies, plotting functions require that
-you have matplotlib (https://matplotlib.org/) installed.
-
-Requires: cantera >= 2.5.0, matplotlib >= 2.0
-Keywords: combustion, reactor network, non-ideal fluid, ignition delay, plotting
-"""
-
 # Dependencies: numpy, and matplotlib
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
+import pickle
 
 from scipy.spatial.distance import cdist
 
@@ -30,81 +11,26 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
-import time
-
-import cantera as ct
-print('Running Cantera version: ' + ct.__version__)
-
-
-# Define the ignition delay time (IDT). This function computes the ignition
-# delay from the occurrence of the peak concentration for the specified
-# species.
-def ignitionDelay(states, species):
-    i_ign = states(species).Y.argmax()
-    return states.t[i_ign]
-
-def run_shock_tube(T, p, mech, gas_type):
-    gas = ct.Solution(mech, gas_type)
-    gas.TP = T, p
-    gas.set_equivalence_ratio(phi=1.0, fuel='c12h26',
-                                   oxidizer={'o2': 1.0, 'n2': 3.76})
-    # Create the reactor and network
-    r = ct.Reactor(contents=gas)
-    reactorNetwork = ct.ReactorNet([r])
-    timeHistory = ct.SolutionArray(gas, extra=['t'])
-    time_list = []
-    state_history = []
-    progress_rate_history = []
-    production_rate_history = []
-    heat_production_rate_history = []
-
-    t0 = time.time()
-
-    # This is a starting estimate. If you do not get an ignition within this time,
-    # increase it
-    estimatedIgnitionDelayTime = 0.005
-    t = 0
-    counter = 1
-    while t < estimatedIgnitionDelayTime:
-        t = reactorNetwork.step()
-        if counter % 20 == 0:
-            # We will save only every 20th value. Otherwise, this takes too long
-            # Note that the species concentrations are mass fractions
-            timeHistory.append(r.thermo.state, t=t)
-            time_list.append(t)
-            state_history.append(r.thermo.state.tolist())
-            progress_rate_history.append(r.kinetics.net_rates_of_progress.tolist())
-            production_rate_history.append(r.kinetics.net_production_rates.tolist())
-            heat_production_rate_history.append(r.kinetics.heat_production_rates.tolist())
-        counter += 1
-
-    # We will use the 'oh' species to compute the ignition delay
-    tau = ignitionDelay(timeHistory, 'oh')
-
-    t1 = time.time()
-    print("Computed Real Gas Ignition Delay: {:.3e} seconds. "
-          "Took {:3.2f}s to compute".format(tau, t1-t0))
-
-    return (
-            timeHistory,
-            reactorNetwork,
-            r, (
-                np.array(time_list),
-                np.array(state_history),
-                np.array(progress_rate_history),
-                np.array(production_rate_history),
-                np.array(heat_production_rate_history),
-                )
-            )
+def load_data(pickle_filename):
+    with open(pickle_filename, 'rb') as pickle_file:
+        data = pickle.load(pickle_file)
+    return data
 
 def run_kmeans(X, n_clusters):
     kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(X)
     return kmeans
 
-def run_elbow_method(X, time_history_df):
+def run_elbow_method(X, state_history_df, min_clusters=1, max_clusters=6):
+    """
+    The first argument, X, is what is used for clustering.
+    The second argument, state_history_df, is a pandas data frame containing
+    the time, temperature, density, and mass fractions. This is used for
+    plotting the clusters so that some kind of comparisons can be made when
+    comparing clustering done on different sets of variables (i.e. X's).
+    """
     distortions = []
     inertias = []
-    cluster_range = list(range(1, 10))
+    cluster_range = list(range(min_clusters, max_clusters))
     for n_clusters in cluster_range:
         print(f'{n_clusters = }')
         kmeans = run_kmeans(X, n_clusters)
@@ -116,8 +42,8 @@ def run_elbow_method(X, time_history_df):
         inertias.append(kmeans.inertia_)
         cluster_numbers = kmeans.labels_
         # Plot the clusters
-        # plot_clusters(time_history_df['t'], time_history_df['T'], cluster_numbers)
-        plot_clusters_detailed(time_history_df, cluster_numbers)
+        # plot_clusters(state_history_df['t'], state_history_df['T'], cluster_numbers)
+        plot_clusters_detailed(state_history_df, cluster_numbers)
     fig, ax1 = plt.subplots()
     ax2 = ax1.twinx()
     ax1.plot(cluster_range, distortions, 'bo-', label='Distortion')
@@ -136,17 +62,17 @@ def plot_clusters(t, T, cluster_number):
     plt.title(f'Number of clusters = {num_clusters}')
     plt.show()
 
-def plot_clusters_detailed(time_history_df, cluster_number):
+def plot_clusters_detailed(state_history_df, cluster_number):
     num_clusters = max(cluster_number) + 1
     vars_to_plot = ['T', 'Y_c12h26', 'Y_o2', 'Y_co2', 'Y_h2o', 'Y_co', 'Y_h2', 'Y_oh', 'Y_ho2']
-    # headers = list(time_history_df.keys())
+    # headers = list(state_history_df.keys())
     # var_indices = [headers.index(var) for var in vars_to_plot]
     plt.subplots(3, 3)
     for i, var in enumerate(vars_to_plot):
         plt.subplot(331 + i)
         plt.scatter(
-                time_history_df['t'],
-                time_history_df[var],
+                state_history_df['t'],
+                state_history_df[var],
                 c=cluster_number,
                 cmap='viridis',
                 )
@@ -162,26 +88,23 @@ def run_pca(X, n_components):
     pca = PCA(n_components=n_components)
     principal_components = pca.fit_transform(X_scaled)
 
-def main():
-    # Define the reactor temperature and pressure:
-    T = 1000  # Kelvin
-    p = 40.0*101325.0  # Pascals
-    # ideal_gas = ct.Solution('nDodecane_Reitz.yaml', 'nDodecane_IG')
-    # gas = ct.Solution('nDodecane_Reitz.yaml', 'nDodecane_RK')
-    (
-        time_history,
-        reactor_network,
-        reactor, (
-            time_list,
-            state_history,
-            progress_rate_history,
-            production_rate_history,
-            heat_production_rate_history,
-            ),
-        ) = run_shock_tube(T, p, 'nDodecane_Reitz.yaml', 'nDodecane_IG')
-    # run_elbow_method(progress_rate_history, time_history.to_pandas())
-    # run_elbow_method(production_rate_history, time_history.to_pandas())
-    run_elbow_method(heat_production_rate_history, time_history.to_pandas())
+def main(data_pickle_filename='nDodecane_data.p'):
+    data = load_data(data_pickle_filename)
+    # Create a pandas object with the state history
+    var_names = ['t', 'T', 'density']
+    var_names.extend(['Y_' + var for var in data['species_names']])
+    state_history_df = pd.DataFrame(
+            np.concatenate((
+                data['time_list'][:, np.newaxis],
+                data['state_history']
+                ), axis=1),
+            columns=var_names,
+            )
+    # Run the elbow method on some data
+    run_elbow_method(data['state_history'], state_history_df)
+    # run_elbow_method(data['progress_rate_history'], state_history_df)
+    # run_elbow_method(data['production_rate_history'], state_history_df)
+    # run_elbow_method(data['heat_production_rate_history'], state_history_df)
 
 #TODO: Add kmeans running and plotting code to main()
 #TODO: Run kmeans on net_progress_variable or something similar
